@@ -75,7 +75,7 @@ if not ODDS_API_KEY:
 # ============= TELEGRAM CONF =================
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or "7854789524:AAGKoURk4w6ZMFY5HIUd4bb70dnJm4Gepto"
 TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID") or "8042762229"
-RATIONALE_MAXLEN = int(os.getenv("RATIONALE_MAXLEN", "420"))
+RATIONALE_MAXLEN = int(os.getenv("RATIONALE_MAXLEN", "1200"))
 
 # ============= GENERAL ENV =================
 REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "15"))
@@ -644,7 +644,7 @@ class LeagueTierManager:
         return False
     async def fetch_and_classify(self):
         if not self.enable_dynamic:
-            logger.info("Dinamikus ligák tiltva.")
+            logger.info("Dinamikus ligák letiltva.")
             return
         logger.info("Ligák lekérése...")
         try:
@@ -1125,7 +1125,7 @@ def load_state():
             tz=ZoneInfo(LOCAL_TZ)
             today_local=datetime.now(tz=tz).date().isoformat()
             if st.get("date")!=today_local:
-                logger.info("Új nap – bankroll reset")
+                logger.info("Új napra váltás – bankroll visszaállítása")
                 st["date"]=today_local
                 st["bankroll_start"]=BANKROLL_DAILY
                 st["bankroll_current"]=BANKROLL_DAILY
@@ -2565,7 +2565,7 @@ def save_ticket_full_analysis(tickets: dict, root: Path)->Optional[Path]:
     ts=datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     path=root / f"ticket_full_analysis_{ts}.json"
     safe_write_json(path, out)
-    logger.info("Ticket teljes elemzés mentve: %s", path.name)
+    logger.info("Ticket teljes elemzés elmentve: %s", path.name)
     return path
 
 def find_stale_fixture_dirs(root: Path)->list[Path]:
@@ -3041,7 +3041,7 @@ async def run_pipeline(fetch: bool, analyze: bool,
     safe_write_json(picks_file, summary)
     GLOBAL_RUNTIME["last_summary"]=summary
     GLOBAL_RUNTIME["last_picks_file"]=picks_file.name
-    logger.info("Futás kész. fetched=%d analyzed=%d picks=%d Tippmix=%s -> %s",
+    logger.info("Futás befejezve. lekérdezett=%d elemzett=%d tippek=%d Tippmix=%s -> %s",
                 len(new_fetched), len(analyzed_res), len(picks), USE_TIPPMIX, picks_file.name)
     return summary
 
@@ -3387,7 +3387,7 @@ def main():
         if picks_files:
             generate_daily_report(picks_files[-1], Path(DAILY_REPORT_DIR))
         else:
-            logger.info("Nincs picks fájl napi riporthoz.")
+            logger.info("Nincs tipp fájl a napi riporthoz.")
 
     if args.update_calibration:
         picks_files=sorted([p for p in DATA_ROOT.glob("picks_*.json")])
@@ -3399,7 +3399,7 @@ def main():
             except Exception:
                 logger.exception("Calibration update hiba.")
         else:
-            logger.info("Nincs picks fájl kalibrációhoz.")
+            logger.info("Nincs tipp fájl a kalibrációhoz.")
 
     if args.retrain_calibration:
         retrain_calibrators(Path(CALIBRATION_HISTORY_FILE))
