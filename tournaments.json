@@ -1,0 +1,104 @@
+{
+  "tournaments": [
+    {
+      "id": 1,
+      "template_name": "Premier League",
+      "translated_name": "Premier League",
+      "short_translated_name": "PL",
+      "venue_id": "england_premier",
+      "is_top_level": true,
+      "api_football_league_id": 39,
+      "country": "England"
+    },
+    {
+      "id": 2,
+      "template_name": "La Liga",
+      "translated_name": "La Liga",
+      "short_translated_name": "LL",
+      "venue_id": "spain_laliga",
+      "is_top_level": true,
+      "api_football_league_id": 140,
+      "country": "Spain"
+    },
+    {
+      "id": 3,
+      "template_name": "Serie A",
+      "translated_name": "Serie A",
+      "short_translated_name": "SA",
+      "venue_id": "italy_serie_a",
+      "is_top_level": true,
+      "api_football_league_id": 135,
+      "country": "Italy"
+    },
+    {
+      "id": 4,
+      "template_name": "Bundesliga",
+      "translated_name": "Bundesliga",
+      "short_translated_name": "BL",
+      "venue_id": "germany_bundesliga",
+      "is_top_level": true,
+      "api_football_league_id": 78,
+      "country": "Germany"
+    },
+    {
+      "id": 5,
+      "template_name": "Ligue 1",
+      "translated_name": "Ligue 1",
+      "short_translated_name": "L1",
+      "venue_id": "france_ligue1",
+      "is_top_level": true,
+      "api_football_league_id": 61,
+      "country": "France"
+    },
+    {
+      "id": 6,
+      "template_name": "Champions League",
+      "translated_name": "Bajnokok Ligája",
+      "short_translated_name": "BL",
+      "venue_id": "uefa_champions",
+      "is_top_level": true,
+      "api_football_league_id": 2,
+      "country": "Europe"
+    },
+    {
+      "id": 7,
+      "template_name": "Europa League",
+      "translated_name": "Európa Liga",
+      "short_translated_name": "EL",
+      "venue_id": "uefa_europa",
+      "is_top_level": true,
+      "api_football_league_id": 3,
+      "country": "Europe"
+    },
+    {
+      "id": 8,
+      "template_name": "Championship",
+      "translated_name": "Championship",
+      "short_translated_name": "CH",
+      "venue_id": "england_championship",
+      "is_top_level": false,
+      "api_football_league_id": 40,
+      "country": "England"
+    },
+    {
+      "id": 9,
+      "template_name": "Liga 2",
+      "translated_name": "Segunda División",
+      "short_translated_name": "L2",
+      "venue_id": "spain_segunda",
+      "is_top_level": false,
+      "api_football_league_id": 141,
+      "country": "Spain"
+    },
+    {
+      "id": 10,
+      "template_name": "NB I",
+      "translated_name": "OTP Bank Liga",
+      "short_translated_name": "NB1",
+      "venue_id": "hungary_nb1",
+      "is_top_level": false,
+      "api_football_league_id": 271,
+      "country": "Hungary"
+    }
+  ]
+}

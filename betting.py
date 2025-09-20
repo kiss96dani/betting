@@ -591,12 +591,44 @@ class LeagueTierManager:
     def _save_classified(self):
         self.classify_cache.parent.mkdir(parents=True, exist_ok=True)
         self.classify_cache.write_text(json.dumps(self.classified, indent=2), encoding="utf-8")
+    
+    def _load_top_leagues_from_tournaments(self) -> set[int]:
+        """Betölti a TOP ligákat a tournaments.json fájlból az is_top_level mező alapján"""
+        tournaments_path = Path("tournaments.json")
+        top_league_ids = set()
+        
+        if not tournaments_path.exists():
+            logger.warning("tournaments.json nem található - TOP liga szűrés korlátozott")
+            return top_league_ids
+            
+        try:
+            tdata = json.loads(tournaments_path.read_text(encoding="utf-8"))
+            tournaments = tdata.get("tournaments", []) if isinstance(tdata, dict) else tdata
+            
+            for tournament in tournaments:
+                if tournament.get("is_top_level", False):
+                    api_league_id = tournament.get("api_football_league_id")
+                    if api_league_id:
+                        top_league_ids.add(api_league_id)
+                        logger.debug(f"TOP liga betöltve tournaments.json-ból: {tournament.get('translated_name', 'Ismeretlen')} (ID: {api_league_id})")
+            
+            logger.info(f"tournaments.json alapján {len(top_league_ids)} TOP liga azonosítva")
+            
+        except Exception as e:
+            logger.exception(f"Hiba a tournaments.json feldolgozásakor: {e}")
+            
+        return top_league_ids
     def _compute_top_ids(self):
         tiers=self.tier_cfg.get("tiers",{})
         top=set()
         for grp in ("TIER1","TIER1B","CUPS_ELITE","NT_MAJOR"):
             for lid in tiers.get(grp, []):
                 top.add(lid)
+        
+        # Kiegészítés tournaments.json alapján
+        top_from_tournaments = self._load_top_leagues_from_tournaments()
+        top.update(top_from_tournaments)
+        
         self._top_ids_set=top
     def is_top(self, league_id: int)->bool:
         return league_id in self._top_ids_set
@@ -971,36 +1003,117 @@ def build_rationale(market: str,
                     notes: str = "",
                     margin_adj_diff: float | None = None,
                     raw_edge: float | None = None,
-                    z_edge: float | None = None) -> str:
-    diff=model_prob-market_prob
-    parts=[
-        f"Piac={market}",
-        f"Pick={selection}",
-        f"Model={model_prob:.4f}",
-        f"Piac={market_prob:.4f}",
-        f"Diff={diff:+.4f}",
-        f"Odds={odds:.2f}",
-        f"Edge={edge_val*100:.1f}%"
-    ]
+                    z_edge: float | None = None,
+                    home_name: str = "",
+                    away_name: str = "",
+                    league_name: str = "",
+                    is_top_league: bool = False,
+                    fixture_id: int = 0) -> str:
+    """
+    Magyar nyelvű, többmondatos, szakmai indoklás generálása minden analyzed mérkőzéshez.
+    A szöveg Telegram-ra kiküldhető formátumban, szakmai hangvételű.
+    """
+    
+    # Alapadatok előkészítése
+    home_team = home_name if home_name else "Hazai csapat"
+    away_team = away_name if away_name else "Vendég csapat"
+    league_info = league_name if league_name else "Ismeretlen bajnokság"
+    liga_tipus = "TOP ligás" if is_top_league else "nem TOP ligás"
+    
+    # Matematikai mutatók
+    edge_percent = edge_val * 100
+    model_percent = model_prob * 100
+    market_percent = market_prob * 100
+    value_ratio = (model_prob * odds) if odds > 0 else 0
+    diff_percent = (model_prob - market_prob) * 100
+    
+    # Selejtválasztás fordítása
+    selection_hu = {
+        "HOME": "hazai győzelem",
+        "AWAY": "vendég győzelem", 
+        "DRAW": "döntetlen",
+        "YES": "igen",
+        "NO": "nem",
+        "OVER25": "felett",
+        "UNDER25": "alatt"
+    }.get(selection.upper(), selection.lower())
+    
+    # Piac fordítása
+    market_hu = {
+        "1X2": "1X2",
+        "BTTS": "mindkét csapat szerez gólt",
+        "O/U2.5": "2.5 gól felett/alatt"
+    }.get(market.upper(), market)
+    
+    # Szakmai indoklás összeállítása
+    sentences = []
+    
+    # 1. Alaphelyzet ismertetése
+    sentences.append(f"A {home_team} - {away_team} mérkőzésen ({league_info}, {liga_tipus}) "
+                    f"a {market_hu} piacon {selection_hu} kimenetelre adjuk le a tippet.")
+    
+    # 2. Matematikai indoklás
+    sentences.append(f"Modelünk {model_percent:.1f}%-os valószínűséget számol erre a kimenetre, "
+                    f"míg a piac {market_percent:.1f}%-ot áraz be, ami {diff_percent:+.1f} százalékpontos "
+                    f"különbséget jelent a javunkra.")
+    
+    # 3. Edge és érték analízis
+    if edge_percent > 0:
+        sentences.append(f"A {odds:.2f}-es odds mellett {edge_percent:.1f}%-os edge-t azonosítottunk, "
+                        f"a várható értékszorzó {value_ratio:.3f}.")
+    else:
+        sentences.append(f"A {odds:.2f}-es odds mellett {edge_percent:.1f}%-os negatív edge-t mutat az elemzés.")
+    
+    # 4. Lambda és csapat erősség
+    if lambda_home > 0 and lambda_away > 0:
+        sentences.append(f"A csapatok támadóereje alapján (λ_hazai={lambda_home:.2f}, λ_vendég={lambda_away:.2f}) "
+                        f"és a {rating_diff:+.3f} rating különbség figyelembevételével kalkuláltunk.")
+    
+    # 5. További technikai mutatók
+    tech_details = []
     if raw_edge is not None:
-        parts.append(f"RawEdge={raw_edge:+.4f}")
+        tech_details.append(f"nyers edge: {raw_edge:+.4f}")
     if margin_adj_diff is not None:
-        parts.append(f"AdjDiff={margin_adj_diff:+.4f}")
+        tech_details.append(f"margin-korrigált különbség: {margin_adj_diff:+.4f}")
     if z_edge is not None:
-        parts.append(f"Z={z_edge:+.2f}")
-    parts.extend([
-        f"λH={lambda_home:.2f}",
-        f"λA={lambda_away:.2f}",
-        f"RatingDiff={rating_diff:+.3f}",
-        f"Ens={'Y' if ensemble_used else 'N'}"
-    ])
-    if strict_flag is not None:
-        parts.append("Qual=" + ("STRICT" if strict_flag else "FALLBACK"))
-    if diff_limit is not None:
-        parts.append(f"DiffTol={diff_limit:.2f}")
+        tech_details.append(f"Z-score: {z_edge:+.2f}")
+    
+    if tech_details:
+        sentences.append(f"Részletes mutatók: {', '.join(tech_details)}.")
+    
+    # 6. Minőségi jelzők
+    quality_flags = []
+    if ensemble_used:
+        quality_flags.append("ensemble modell")
+    if strict_flag is True:
+        quality_flags.append("szigorú minőségi kritériumok")
+    elif strict_flag is False:
+        quality_flags.append("fallback kritériumok")
+    
+    if quality_flags:
+        sentences.append(f"Az elemzés {', '.join(quality_flags)} alapján készült.")
+    
+    # 7. Liga-specifikus kiegészítés
+    if not is_top_league:
+        sentences.append(f"Figyelem: ez egy {liga_tipus} mérkőzés, "
+                        f"ami magasabb kockázatot jelenthet az alacsonyabb likviditás miatt.")
+    
+    # 8. Megjegyzések hozzáadása
     if notes:
-        parts.append("Notes="+notes)
-    return " | ".join(parts)
+        sentences.append(f"Kiegészítő információ: {notes}")
+    
+    # Formázás Telegram-kompatibilis módon
+    final_text = " ".join(sentences)
+    
+    # Technikai adatok hozzáfűzése a végére
+    tech_summary = (f"\n\n📊 Technikai összefoglaló:\n"
+                   f"• Mérkőzés ID: {fixture_id}\n"
+                   f"• Model valószínűség: {model_percent:.1f}%\n" 
+                   f"• Piaci valószínűség: {market_percent:.1f}%\n"
+                   f"• Edge: {edge_percent:.1f}%\n"
+                   f"• Odds: {odds:.2f}")
+    
+    return final_text + tech_summary
 
 # =========================================================
 # Állapot mentés / betöltés
@@ -1827,6 +1940,21 @@ def analyze_fixture(root: Path, fixture_id: int, enhanced_tools: dict|None=None)
 # =========================================================
 # PICK / STAKE – (C) margin_adj felhasználás kiegészítő adata
 # =========================================================
+
+def _write_audit_log(message: str, fixture_id: int = 0):
+    """Audit naplózás nem TOP ligás meccsek indoklásához"""
+    try:
+        audit_file = DATA_ROOT / "audit_picks.log"
+        timestamp = datetime.now(timezone.utc).isoformat()
+        log_entry = f"[{timestamp}] FID:{fixture_id} - {message}\n"
+        
+        # Append to audit file
+        with open(audit_file, "a", encoding="utf-8") as f:
+            f.write(log_entry)
+            
+    except Exception as e:
+        logger.exception(f"Audit log írási hiba: {e}")
+
 def allocate_stakes(analysis_results: list[dict])->list[dict]:
     bankroll=RUNTIME_STATE["bankroll_current"]
     max_single=bankroll * MAX_SINGLE_STAKE_FRACTION
@@ -1904,6 +2032,13 @@ def allocate_stakes(analysis_results: list[dict])->list[dict]:
         enhanced_used="enhanced_model" in r
         rating_diff=(r.get("home_rating",{}).get("combined_rating",0) -
                      r.get("away_rating",{}).get("combined_rating",0))
+        # Fixture metadata betöltése a csapatnevekhez és liga információhoz
+        meta = load_fixture_meta(r["fixture_id"])
+        home_name = meta.get("home_name", "")
+        away_name = meta.get("away_name", "")
+        league_name = meta.get("league_name", "")
+        is_top_league = LEAGUE_MANAGER.is_top(league_id)
+        
         rationale=build_rationale(
             market="1X2",
             selection=best_sel.upper(),
@@ -1920,9 +2055,14 @@ def allocate_stakes(analysis_results: list[dict])->list[dict]:
             notes=f"Pick stake kelly={k_frac:.4f} diff={diff:+.4f}",
             margin_adj_diff=margin_adj_diff,
             raw_edge=raw_edge_val,
-            z_edge=z_edge
+            z_edge=z_edge,
+            home_name=home_name,
+            away_name=away_name,
+            league_name=league_name,
+            is_top_league=is_top_league,
+            fixture_id=r["fixture_id"]
         )
-        picks.append({
+        pick_entry = {
             "fixture_id": r["fixture_id"],
             "selection": best_sel,
             "edge": round(best_edge,4),
@@ -1933,8 +2073,24 @@ def allocate_stakes(analysis_results: list[dict])->list[dict]:
             "kickoff_utc": r["kickoff_utc"],
             "rationale": rationale,
             "league_id": league_id,
-            "league_tier": r.get("league_tier")
-        })
+            "league_tier": r.get("league_tier"),
+            "home_name": home_name,
+            "away_name": away_name,
+            "league_name": league_name,
+            "is_top_league": is_top_league,
+            "model_prob": model_prob
+        }
+        
+        # Audit logging nem TOP ligás meccsekhez
+        if not is_top_league:
+            audit_reason = (f"Nem TOP ligás mérkőzés kiválasztva: {home_name} vs {away_name} "
+                          f"({league_name}, Tier: {r.get('league_tier', 'N/A')}). "
+                          f"Edge: {best_edge:.4f}, Model prob: {model_prob:.4f}, "
+                          f"Liga ID: {league_id}")
+            logger.warning(f"AUDIT: {audit_reason}")
+            _write_audit_log(audit_reason, r["fixture_id"])
+        
+        picks.append(pick_entry)
     return picks
 
 def register_picks(picks: list[dict]):
@@ -2023,13 +2179,25 @@ def select_best_tickets(analyzed_results: list[dict], only_today: bool=True) -> 
                     sel_info=implied_block["selections"].get(sel)
                     if sel_info:
                         margin_adj=sel_info.get("margin_adj_diff"); z_e=sel_info.get("z_edge")
+                # Fixture metadata betöltése
+                meta = load_fixture_meta(r["fixture_id"])
+                home_name = meta.get("home_name", "")
+                away_name = meta.get("away_name", "")
+                league_name = meta.get("league_name", "")
+                is_top_league = LEAGUE_MANAGER.is_top(r.get("league_id", 0))
+                
                 rationale=build_rationale("1X2", sel.upper(), p, pi, o, e,
                                           r.get("lambda_home",0), r.get("lambda_away",0),
                                           rating_diff, True, TICKET_DIFF_TOL_1X2,
                                           "enhanced_model" in r, "Ticket strict",
                                           margin_adj_diff=margin_adj,
                                           raw_edge=raw_edge,
-                                          z_edge=z_e)
+                                          z_edge=z_e,
+                                          home_name=home_name,
+                                          away_name=away_name,
+                                          league_name=league_name,
+                                          is_top_league=is_top_league,
+                                          fixture_id=r["fixture_id"])
                 best_edge_1x2=e
                 best_1x2={
                     "fixture_id": r["fixture_id"],
@@ -2041,7 +2209,11 @@ def select_best_tickets(analyzed_results: list[dict], only_today: bool=True) -> 
                     "odds": o,
                     "model_prob": round(p,4),
                     "kickoff_utc": r["kickoff_utc"],
-                    "rationale": rationale
+                    "rationale": rationale,
+                    "home_name": home_name,
+                    "away_name": away_name,
+                    "league_name": league_name,
+                    "is_top_league": is_top_league
                 }
     best_btts=None; best_edge_btts=-1
     candidate_btts_fallback=[]
@@ -2082,6 +2254,13 @@ def select_best_tickets(analyzed_results: list[dict], only_today: bool=True) -> 
                     margin_adj=d.get("margin_adj_diff"); z_e=d.get("z_edge"); raw_edge_val=d.get("raw_edge")
             if abs(p-p_mkt)<=TICKET_DIFF_TOL_2WAY:
                 if e>best_edge_btts:
+                    # Fixture metadata betöltése
+                    meta = load_fixture_meta(r["fixture_id"])
+                    home_name = meta.get("home_name", "")
+                    away_name = meta.get("away_name", "")
+                    league_name = meta.get("league_name", "")
+                    is_top_league = LEAGUE_MANAGER.is_top(r.get("league_id", 0))
+                    
                     rationale=build_rationale(
                         market="BTTS",
                         selection=sel_label,
@@ -2098,7 +2277,12 @@ def select_best_tickets(analyzed_results: list[dict], only_today: bool=True) -> 
                         notes="Ticket strict",
                         margin_adj_diff=margin_adj,
                         raw_edge=raw_edge_val,
-                        z_edge=z_e
+                        z_edge=z_e,
+                        home_name=home_name,
+                        away_name=away_name,
+                        league_name=league_name,
+                        is_top_league=is_top_league,
+                        fixture_id=r["fixture_id"]
                     )
                     best_edge_btts=e
                     best_btts={
@@ -2111,10 +2295,22 @@ def select_best_tickets(analyzed_results: list[dict], only_today: bool=True) -> 
                         "odds": yes_o if sel_raw=="btts_yes" else no_o,
                         "model_prob": round(p,4),
                         "kickoff_utc": r["kickoff_utc"],
-                        "rationale": rationale
+                        "rationale": rationale,
+                        "home_name": home_name,
+                        "away_name": away_name,
+                        "league_name": league_name,
+                        "is_top_league": is_top_league
                     }
             else:
                 if TICKET_FALLBACK_ENABLE and abs(p-p_mkt)<=TICKET_FALLBACK_DIFF_TOL_2WAY and e>0.05:
+                    # Fixture metadata betöltése fallback esetén is
+                    if 'meta' not in locals():
+                        meta = load_fixture_meta(r["fixture_id"])
+                        home_name = meta.get("home_name", "")
+                        away_name = meta.get("away_name", "")
+                        league_name = meta.get("league_name", "")
+                        is_top_league = LEAGUE_MANAGER.is_top(r.get("league_id", 0))
+                    
                     rationale=build_rationale(
                         market="BTTS",
                         selection=sel_label,
@@ -2131,7 +2327,12 @@ def select_best_tickets(analyzed_results: list[dict], only_today: bool=True) -> 
                         notes="Fallback jelölt",
                         margin_adj_diff=margin_adj,
                         raw_edge=raw_edge_val,
-                        z_edge=z_e
+                        z_edge=z_e,
+                        home_name=home_name,
+                        away_name=away_name,
+                        league_name=league_name,
+                        is_top_league=is_top_league,
+                        fixture_id=r["fixture_id"]
                     )
                     candidate_btts_fallback.append({
                         "fixture_id": r["fixture_id"],
@@ -2144,7 +2345,11 @@ def select_best_tickets(analyzed_results: list[dict], only_today: bool=True) -> 
                         "model_prob": round(p,4),
                         "kickoff_utc": r["kickoff_utc"],
                         "rationale": rationale,
-                        "_fallback": True
+                        "_fallback": True,
+                        "home_name": home_name,
+                        "away_name": away_name,
+                        "league_name": league_name,
+                        "is_top_league": is_top_league
                     })
     if not best_btts and candidate_btts_fallback:
         candidate_btts_fallback.sort(key=lambda x: x["edge"], reverse=True)
@@ -2191,6 +2396,13 @@ def select_best_tickets(analyzed_results: list[dict], only_today: bool=True) -> 
                     margin_adj=d.get("margin_adj_diff"); z_e=d.get("z_edge"); raw_edge_val=d.get("raw_edge")
             if abs(p-p_mkt)<=TICKET_DIFF_TOL_2WAY:
                 if e>best_edge_ou:
+                    # Fixture metadata betöltése
+                    meta = load_fixture_meta(r["fixture_id"])
+                    home_name = meta.get("home_name", "")
+                    away_name = meta.get("away_name", "")
+                    league_name = meta.get("league_name", "")
+                    is_top_league = LEAGUE_MANAGER.is_top(r.get("league_id", 0))
+                    
                     rationale=build_rationale(
                         market="O/U 2.5",
                         selection=label,
@@ -2207,7 +2419,12 @@ def select_best_tickets(analyzed_results: list[dict], only_today: bool=True) -> 
                         notes="Ticket strict",
                         margin_adj_diff=margin_adj,
                         raw_edge=raw_edge_val,
-                        z_edge=z_e
+                        z_edge=z_e,
+                        home_name=home_name,
+                        away_name=away_name,
+                        league_name=league_name,
+                        is_top_league=is_top_league,
+                        fixture_id=r["fixture_id"]
                     )
                     best_edge_ou=e
                     best_ou={
@@ -2220,10 +2437,22 @@ def select_best_tickets(analyzed_results: list[dict], only_today: bool=True) -> 
                         "odds": o,
                         "model_prob": round(p,4),
                         "kickoff_utc": r["kickoff_utc"],
-                        "rationale": rationale
+                        "rationale": rationale,
+                        "home_name": home_name,
+                        "away_name": away_name,
+                        "league_name": league_name,
+                        "is_top_league": is_top_league
                     }
             else:
                 if TICKET_FALLBACK_ENABLE and abs(p-p_mkt)<=TICKET_FALLBACK_DIFF_TOL_2WAY and e>0.05:
+                    # Fixture metadata betöltése fallback esetén is  
+                    if 'meta' not in locals():
+                        meta = load_fixture_meta(r["fixture_id"])
+                        home_name = meta.get("home_name", "")
+                        away_name = meta.get("away_name", "")
+                        league_name = meta.get("league_name", "")
+                        is_top_league = LEAGUE_MANAGER.is_top(r.get("league_id", 0))
+                    
                     rationale=build_rationale(
                         market="O/U 2.5",
                         selection=label,
@@ -2240,7 +2469,12 @@ def select_best_tickets(analyzed_results: list[dict], only_today: bool=True) -> 
                         notes="Fallback jelölt",
                         margin_adj_diff=margin_adj,
                         raw_edge=raw_edge_val,
-                        z_edge=z_e
+                        z_edge=z_e,
+                        home_name=home_name,
+                        away_name=away_name,
+                        league_name=league_name,
+                        is_top_league=is_top_league,
+                        fixture_id=r["fixture_id"]
                     )
                     candidate_ou_fallback.append({
                         "fixture_id": r["fixture_id"],
@@ -2253,7 +2487,11 @@ def select_best_tickets(analyzed_results: list[dict], only_today: bool=True) -> 
                         "model_prob": round(p,4),
                         "kickoff_utc": r["kickoff_utc"],
                         "rationale": rationale,
-                        "_fallback": True
+                        "_fallback": True,
+                        "home_name": home_name,
+                        "away_name": away_name,
+                        "league_name": league_name,
+                        "is_top_league": is_top_league
                     })
     if not best_ou and candidate_ou_fallback:
         candidate_ou_fallback.sort(key=lambda x: x["edge"], reverse=True)
