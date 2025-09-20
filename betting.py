@@ -66,6 +66,12 @@ API_KEY = os.getenv("API_FOOTBALL_KEY") or _API_FALLBACK
 if os.getenv("API_FOOTBALL_KEY") is None:
     logger.warning("API_FOOTBALL_KEY nincs ENV-ben – fallback kulcs (csak dev).")
 
+# ============= ODDS-API CONF =================
+ODDS_API_BASE = os.getenv("ODDS_API_BASE", "https://api.the-odds-api.com/v4")
+ODDS_API_KEY = os.getenv("ODDS_API_KEY", "")
+if not ODDS_API_KEY:
+    logger.warning("ODDS_API_KEY nincs beállítva – OddsAPI funkciók korlátottak.")
+
 # ============= TELEGRAM CONF =================
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or "7854789524:AAGKoURk4w6ZMFY5HIUd4bb70dnJm4Gepto"
 TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID") or "8042762229"
@@ -139,6 +145,23 @@ EXTRA_NT_MAJOR_IDS = {int(x) for x in os.getenv("EXTRA_NT_MAJOR_IDS","").split("
 PUBLISH_MIN_EDGE_TOP = float(os.getenv("PUBLISH_MIN_EDGE_TOP", "0.05"))
 PUBLISH_MIN_EDGE_OTHER = float(os.getenv("PUBLISH_MIN_EDGE_OTHER", "0.08"))
 
+# ============ Új betting funkciók environment változók ============
+# Value betting minimum edge threshold
+MIN_EDGE_THRESHOLD = float(os.getenv("MIN_EDGE_THRESHOLD", "0.03"))  # 3%
+
+# Fix stake amount
+FIX_STAKE_AMOUNT = float(os.getenv("FIX_STAKE_AMOUNT", "10000"))  # 10,000 Ft
+
+# Margin filtering thresholds
+MAX_MARGIN_1X2 = float(os.getenv("MAX_MARGIN_1X2", "1.10"))
+MAX_MARGIN_2WAY = float(os.getenv("MAX_MARGIN_2WAY", "1.10"))
+
+# Liga szűrés - csak TIER1 és TIER1B ligák
+ENABLE_TIER_FILTERING = os.getenv("ENABLE_TIER_FILTERING", "1") == "1"
+
+# Döntetlen kizárása az 1X2 piacokról
+EXCLUDE_DRAW_1X2 = os.getenv("EXCLUDE_DRAW_1X2", "1") == "1"
+
 # ============ TippmixPro integráció flag-ek ============
 USE_TIPPMIX = os.getenv("USE_TIPPMIX", "1") == "1"
 TIPPMIX_DAYS_AHEAD = int(os.getenv("TIPPMIX_DAYS_AHEAD", str(FETCH_DAYS_AHEAD)))
@@ -177,6 +200,13 @@ try:
     HAVE_PYMC = True
 except ImportError:
     HAVE_PYMC = False
+try:
+    import matplotlib.pyplot as plt
+    import matplotlib
+    matplotlib.use('Agg')  # Non-interactive backend
+    HAVE_MATPLOTLIB = True
+except ImportError:
+    HAVE_MATPLOTLIB = False
 
 def parse_ensemble_weights() -> dict:
     try:
@@ -586,12 +616,17 @@ class LeagueTierManager:
             return
         logger.info("Ligák lekérése...")
         try:
+            # API-Football adatok lekérése
             async with aiohttp.ClientSession(timeout=ClientTimeout(total=REQUEST_TIMEOUT)) as s:
                 headers={"x-apisports-key": API_KEY,"Accept":"application/json"}
                 url=API_BASE.rstrip("/")+"/leagues"
                 async with s.get(url, headers=headers) as resp:
                     js=await resp.json(content_type=None)
             resp=js.get("response") or []
+            
+            # OddsAPI adatok lekérése (új funkció)
+            odds_api_leagues = await fetch_leagues_from_odds_api()
+            
             tiers_cfg_ids={k:set(v) for k,v in self.tier_cfg.get("tiers",{}).items()}
             classified={}
             for entry in resp:
@@ -600,8 +635,18 @@ class LeagueTierManager:
                 lid=league.get("id"); name=league.get("name","")
                 if not lid: continue
                 tier=None
-                for grp,ids in tiers_cfg_ids.items():
-                    if lid in ids: tier=grp; break
+                
+                # Először próbálja az OddsAPI adatokból
+                for odds_league_name, odds_data in odds_api_leagues.items():
+                    if name.lower() in odds_league_name.lower() or odds_league_name.lower() in name.lower():
+                        tier = odds_data["tier"]
+                        break
+                
+                # Ha nem találja, használja a konfigurációt
+                if tier is None:
+                    for grp,ids in tiers_cfg_ids.items():
+                        if lid in ids: tier=grp; break
+                
                 if tier is None and self._is_excluded_name(name): tier="EXCLUDE"
                 if tier is None: tier="OTHER"
                 seasons=entry.get("seasons") or []
@@ -613,7 +658,7 @@ class LeagueTierManager:
             self.classified=classified
             self._save_classified()
             self._compute_top_ids()
-            logger.info("Liga klasszifikáció kész: %d", len(classified))
+            logger.info("Liga klasszifikáció kész: %d, OddsAPI mapping: %d", len(classified), len(odds_api_leagues))
         except Exception:
             logger.exception("Liga fetch/classify hiba.")
     def summarize_tiers(self)->Dict[str,int]:
@@ -1046,6 +1091,139 @@ class APIFootballClient:
             return {"errors":["network_fail"],"response":[]}
 
 # =========================================================
+# OddsAPI kliens - Liga adatok lekérésére
+# =========================================================
+class OddsAPIClient:
+    def __init__(self, api_key: str, base: str):
+        self.api_key = api_key
+        self.base = base.rstrip("/")
+        self._session: aiohttp.ClientSession|None = None
+        self._sem = asyncio.Semaphore(PARALLEL_CONNECTIONS)
+        self.last_rate_headers = {}
+    
+    async def __aenter__(self):
+        timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
+        self._session = aiohttp.ClientSession(timeout=timeout, raise_for_status=False)
+        return self
+    
+    async def __aexit__(self, *exc):
+        if self._session: 
+            await self._session.close()
+    
+    async def get(self, endpoint: str, params: dict = None) -> dict:
+        if not self.api_key:
+            logger.warning("OddsAPI kulcs hiányzik")
+            return {"data": [], "error": "No API key"}
+        
+        url = self.base + endpoint
+        params = params or {}
+        params["apiKey"] = self.api_key
+        
+        async with self._sem:
+            # Rate limiting
+            if self.last_rate_headers:
+                try:
+                    remain = int(self.last_rate_headers.get("x-requests-remaining", "10"))
+                    if remain < 3: 
+                        await asyncio.sleep(1.0)
+                except: 
+                    pass
+            
+            for attempt in range(3):
+                try:
+                    async with self._session.get(url, params=params) as resp:
+                        txt = await resp.text()
+                        try: 
+                            js = json.loads(txt)
+                        except json.JSONDecodeError:
+                            js = {"raw": txt, "parse_error": True}
+                        
+                        # Store rate limit headers
+                        for k, v in resp.headers.items():
+                            lk = k.lower()
+                            if lk.startswith("x-requests"):
+                                self.last_rate_headers[lk] = v
+                        
+                        if resp.status >= 500:
+                            await asyncio.sleep(1 + attempt)
+                            continue
+                        return js
+                except (aiohttp.ClientError, asyncio.TimeoutError):
+                    await asyncio.sleep(1 + attempt)
+            return {"data": [], "error": "network_fail"}
+    
+    async def get_sports(self) -> dict:
+        """Lekéri az elérhető sportágakat"""
+        return await self.get("/sports")
+    
+    async def get_leagues(self, sport_key: str = "soccer") -> dict:
+        """Lekéri az adott sportág ligáit"""
+        return await self.get(f"/sports/{sport_key}/events")
+
+# =========================================================
+# Liga mapping és tier osztályozás OddsAPI-val
+# =========================================================
+async def fetch_leagues_from_odds_api() -> Dict[str, dict]:
+    """OddsAPI-ból lekéri a ligákat és tier besorolást készít"""
+    if not ODDS_API_KEY:
+        logger.warning("OddsAPI kulcs nincs beállítva - alapértelmezett tier mapping")
+        return {}
+    
+    leagues_data = {}
+    try:
+        async with OddsAPIClient(ODDS_API_KEY, ODDS_API_BASE) as client:
+            # Lekérjük a futball ligákat
+            result = await client.get_leagues("soccer")
+            
+            if "data" in result:
+                events = result.get("data", [])
+            else:
+                # Ha a válasz közvetlenül a ligák listája
+                events = result if isinstance(result, list) else []
+            
+            # TIER1 és TIER1B ligák meghatározása név alapján
+            tier1_keywords = [
+                "Premier League", "La Liga", "Serie A", "Bundesliga", "Ligue 1",
+                "Champions League", "UEFA", "World Cup", "Euro", "Copa America"
+            ]
+            
+            tier1b_keywords = [
+                "Championship", "Liga 2", "Serie B", "2. Bundesliga", "Ligue 2",
+                "Eredivisie", "Primeira Liga", "Pro League", "Super League"
+            ]
+            
+            for event in events:
+                league_name = event.get("home_team", {}).get("league", "") or event.get("sport_title", "")
+                if not league_name:
+                    continue
+                
+                # Tier meghatározása
+                tier = "OTHER"
+                for keyword in tier1_keywords:
+                    if keyword.lower() in league_name.lower():
+                        tier = "TIER1"
+                        break
+                
+                if tier == "OTHER":
+                    for keyword in tier1b_keywords:
+                        if keyword.lower() in league_name.lower():
+                            tier = "TIER1B"
+                            break
+                
+                leagues_data[league_name] = {
+                    "name": league_name,
+                    "tier": tier,
+                    "source": "odds_api"
+                }
+                
+        logger.info(f"OddsAPI liga adatok feldolgozva: {len(leagues_data)} liga")
+        
+    except Exception as e:
+        logger.exception(f"OddsAPI liga lekérés hiba: {e}")
+    
+    return leagues_data
+
+# =========================================================
 # Fixtures lekérése
 # =========================================================
 async def fetch_upcoming_fixtures(client: APIFootballClient, days_ahead: int)->list[dict]:
@@ -1060,6 +1238,13 @@ async def fetch_upcoming_fixtures(client: APIFootballClient, days_ahead: int)->l
             if league_id:
                 if LEAGUE_WHITELIST and league_id not in LEAGUE_WHITELIST: continue
                 if league_id in LEAGUE_BLACKLIST: continue
+                
+                # Új tier-alapú szűrés: csak TIER1 és TIER1B ligák
+                if ENABLE_TIER_FILTERING:
+                    tier = LEAGUE_MANAGER.tier_of(league_id)
+                    if tier not in ["TIER1", "TIER1B"]:
+                        continue
+                
                 if TOP_MODE=="top_only":
                     if not LEAGUE_MANAGER.is_top(league_id): continue
                 elif TOP_MODE=="hybrid":
@@ -1117,6 +1302,57 @@ def overround_1x2(odds: dict)->float:
 def overround_2way(o1: float, o2: float)->float:
     try: return 1/float(o1) + 1/float(o2)
     except Exception: return 999.0
+
+# =========================================================
+# Szigorú margin szűrés - Új funkciók
+# =========================================================
+def passes_margin_filter_1x2(odds: dict) -> bool:
+    """Ellenőrzi, hogy az 1X2 odds margin ≤ MAX_MARGIN_1X2"""
+    if not odds or not all(k in odds for k in ["home", "draw", "away"]):
+        return False
+    margin = overround_1x2(odds)
+    return margin <= MAX_MARGIN_1X2
+
+def passes_margin_filter_2way(o1: float, o2: float) -> bool:
+    """Ellenőrzi, hogy a 2-way odds margin ≤ MAX_MARGIN_2WAY"""
+    if not o1 or not o2:
+        return False
+    margin = overround_2way(o1, o2)
+    return margin <= MAX_MARGIN_2WAY
+
+def filter_odds_by_margin(odds_data: dict) -> dict:
+    """Odds szűrése margin alapján"""
+    filtered = {}
+    
+    # 1X2 szűrés
+    if "one_x_two" in odds_data and passes_margin_filter_1x2(odds_data["one_x_two"]):
+        filtered["one_x_two"] = odds_data["one_x_two"]
+    
+    # BTTS szűrés
+    if "btts" in odds_data:
+        btts = odds_data["btts"]
+        if btts and "yes" in btts and "no" in btts:
+            try:
+                yes_odds = float(btts["yes"])
+                no_odds = float(btts["no"])
+                if passes_margin_filter_2way(yes_odds, no_odds):
+                    filtered["btts"] = btts
+            except:
+                pass
+    
+    # Over/Under 2.5 szűrés
+    if "ou25" in odds_data:
+        ou25 = odds_data["ou25"]
+        if ou25 and "over25" in ou25 and "under25" in ou25:
+            try:
+                over_odds = float(ou25["over25"])
+                under_odds = float(ou25["under25"])
+                if passes_margin_filter_2way(over_odds, under_odds):
+                    filtered["ou25"] = ou25
+            except:
+                pass
+    
+    return filtered
 
 def valid_1x2_parsing(odds: dict)->bool:
     if not odds or any(k not in odds for k in ("home","draw","away")): return False
@@ -1598,8 +1834,20 @@ def allocate_stakes(analysis_results: list[dict])->list[dict]:
     for r in analysis_results:
         odds=r.get("odds")
         if not odds: continue
+        
+        # Margin szűrés alkalmazása
+        filtered_odds = filter_odds_by_margin(odds)
+        if not filtered_odds.get("one_x_two"):
+            continue  # Ha az 1X2 odds nem felel meg a margin kritériumnak
+        
+        odds = filtered_odds  # Használjuk a szűrt odds-okat
+        
         league_id=r.get("league_id")
         def passes_publish_threshold(edge_val: float)->bool:
+            # Value betting logika: minimum edge threshold ellenőrzése
+            if edge_val < MIN_EDGE_THRESHOLD:
+                return False
+                
             if TOP_MODE=="all": return edge_val>0
             if TOP_MODE=="top_only":
                 return LEAGUE_MANAGER.is_top(league_id) and edge_val>=PUBLISH_MIN_EDGE_TOP
@@ -1610,8 +1858,13 @@ def allocate_stakes(analysis_results: list[dict])->list[dict]:
         edge_d=r.get("edge",{})
         kelly_d=r.get("kelly",{})
         best_sel=None; best_edge=0.0
-        # választásnál marad a raw edge (kompatibilitás), de rationale-ben megjelenítjük margin adj.
-        for sel in ("home","draw","away"):
+        
+        # Döntetlen kizárása 1X2 piacokról
+        selections_to_check = ["home", "away"]
+        if not EXCLUDE_DRAW_1X2:
+            selections_to_check.append("draw")
+        
+        for sel in selections_to_check:
             e=edge_d.get(sel,0.0)
             if e>0 and e>best_edge:
                 best_edge=e; best_sel=sel
@@ -1623,11 +1876,16 @@ def allocate_stakes(analysis_results: list[dict])->list[dict]:
         if sel_odds>MAX_ODDS_1X2_PICKS: continue
         if best_edge>PICK_EDGE_CAP_1X2: continue
         if not passes_publish_threshold(best_edge): continue
-        k_frac=kelly_d.get(best_sel,0.0)*KELLY_STAKE_MULTIPLIER
-        if k_frac<=0: continue
-        raw_stake=bankroll*k_frac
-        stake=min(raw_stake,max_single)
-        if stake<1: continue
+        
+        # Fix tét rendszer - FIX_STAKE_AMOUNT használata Kelly helyett
+        stake = FIX_STAKE_AMOUNT
+        
+        # Bankroll ellenőrzés
+        if stake > max_single:
+            stake = max_single
+        if stake < 1: 
+            continue
+            
         projected=stake*sel_odds
         model_prob=r.get("model_probs",{}).get(best_sel,0.0)
         implied_block=r.get("market_prob_details",{}).get("one_x_two",{})
@@ -2196,6 +2454,9 @@ def generate_reliability_diagram(hist: dict, out_path: Path):
                 return f"{bins[i]:.2f}-{bins[i+1]:.2f}"
         return f"{bins[-2]:.2f}-{bins[-1]:.2f}"
     output={"generated_at": datetime.utcnow().isoformat(), "bin_size": bin_size, "categories": {}}
+    
+    # Adatok gyűjtése minden kategóriához
+    plot_data = {}
     for cat in ("home","draw","away"):
         raw=hist.get(cat,{}).get("raw",[])
         outc=hist.get(cat,{}).get("outcome",[])
@@ -2207,6 +2468,8 @@ def generate_reliability_diagram(hist: dict, out_path: Path):
             agg[b]["count"]+=1
             agg[b]["sum"]+=o
         diag=[]
+        mid_probs = []
+        empiricals = []
         for b,info in sorted(agg.items(), key=lambda x:x[0]):
             avg_obs=info["sum"]/info["count"] if info["count"]>0 else 0
             mid_prob = sum(float(x) for x in b.split("-"))/2
@@ -2216,8 +2479,54 @@ def generate_reliability_diagram(hist: dict, out_path: Path):
                 "count": info["count"],
                 "empirical": avg_obs
             })
+            mid_probs.append(mid_prob)
+            empiricals.append(avg_obs)
         output["categories"][cat]=diag
+        plot_data[cat] = (mid_probs, empiricals)
+    
+    # JSON mentése
     safe_write_json(out_path, output)
+    
+    # PNG generálása matplotlib-tel
+    if HAVE_MATPLOTLIB and plot_data:
+        try:
+            plt.figure(figsize=(10, 8))
+            
+            # Ideális kalibrációs vonal (y=x)
+            plt.plot([0, 1], [0, 1], 'k--', alpha=0.7, label='Perfect Calibration')
+            
+            # Minden kategória külön színnel
+            colors = {'home': 'blue', 'draw': 'green', 'away': 'red'}
+            
+            for cat, (mid_probs, empiricals) in plot_data.items():
+                if mid_probs and empiricals:
+                    plt.scatter(mid_probs, empiricals, 
+                              label=f'{cat.capitalize()} predictions', 
+                              color=colors.get(cat, 'gray'), 
+                              alpha=0.7, s=50)
+                    plt.plot(mid_probs, empiricals, 
+                           color=colors.get(cat, 'gray'), 
+                           alpha=0.5, linewidth=1)
+            
+            plt.xlabel('Predicted Probability')
+            plt.ylabel('Empirical Frequency')
+            plt.title('Reliability Diagram - Model Calibration')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            plt.xlim(0, 1)
+            plt.ylim(0, 1)
+            
+            # PNG mentése
+            png_path = out_path.with_suffix('.png')
+            plt.savefig(png_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            logger.info(f"Reliability diagram mentve: {png_path}")
+            
+        except Exception as e:
+            logger.exception(f"Reliability diagram PNG generálás hiba: {e}")
+    
+    logger.info(f"Reliability diagram JSON mentve: {out_path}")
 
 def update_calibration_history_from_results(cal_path: Path, picks: List[dict]):
     hist=load_calibration_history(cal_path)
