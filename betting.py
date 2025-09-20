@@ -513,6 +513,7 @@ class TeamComputedRating:
 class FixtureContext:
     fixture_id: int
     league_id: int
+    league_name: str
     season: int
     home_team_id: int
     away_team_id: int
@@ -1912,6 +1913,7 @@ def build_fixture_context(root: Path, fixture_id: int):
     ctx=FixtureContext(
         fixture_id=fixture_id,
         league_id=league_id,
+        league_name=league.get("name", ""),
         season=season,
         home_team_id=home_id,
         away_team_id=away_id,
@@ -2035,6 +2037,7 @@ def analyze_fixture(root: Path, fixture_id: int, enhanced_tools: dict|None=None)
         "fixture_id": ctx.fixture_id,
         "kickoff_utc": ctx.kickoff_utc.isoformat(),
         "league_id": ctx.league_id,
+        "league_name": ctx.league_name,
         "league_tier": tier,
         "season": ctx.season,
         "teams": {"home_id": ctx.home_team_id, "away_id": ctx.away_team_id},
