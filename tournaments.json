@@ -1,0 +1,74 @@
+[
+  {
+    "id": 1,
+    "name": "Premier League",
+    "template_name": "English Premier League",
+    "translated_name": "Angol Premier League",
+    "short_translated_name": "Premier League",
+    "is_top_level": true,
+    "venue_id": 1
+  },
+  {
+    "id": 2,
+    "name": "La Liga",
+    "template_name": "Spanish La Liga",
+    "translated_name": "Spanyol La Liga",
+    "short_translated_name": "La Liga",
+    "is_top_level": true,
+    "venue_id": 2
+  },
+  {
+    "id": 3,
+    "name": "Serie A",
+    "template_name": "Italian Serie A",
+    "translated_name": "Olasz Serie A",
+    "short_translated_name": "Serie A",
+    "is_top_level": true,
+    "venue_id": 3
+  },
+  {
+    "id": 4,
+    "name": "Bundesliga",
+    "template_name": "German Bundesliga",
+    "translated_name": "Német Bundesliga",
+    "short_translated_name": "Bundesliga",
+    "is_top_level": true,
+    "venue_id": 4
+  },
+  {
+    "id": 5,
+    "name": "Ligue 1",
+    "template_name": "French Ligue 1",
+    "translated_name": "Francia Ligue 1",
+    "short_translated_name": "Ligue 1",
+    "is_top_level": true,
+    "venue_id": 5
+  },
+  {
+    "id": 6,
+    "name": "Champions League",
+    "template_name": "UEFA Champions League",
+    "translated_name": "UEFA Bajnokok Ligája",
+    "short_translated_name": "BL",
+    "is_top_level": true,
+    "venue_id": 6
+  },
+  {
+    "id": 7,
+    "name": "Championship",
+    "template_name": "English Championship",
+    "translated_name": "Angol Championship",
+    "short_translated_name": "Championship",
+    "is_top_level": false,
+    "venue_id": 7
+  },
+  {
+    "id": 8,
+    "name": "Second Division",
+    "template_name": "Second Division League",
+    "translated_name": "Másodosztály",
+    "short_translated_name": "2. Liga",
+    "is_top_level": false,
+    "venue_id": 8
+  }
+]
