@@ -956,6 +956,102 @@ def ensemble_probs(base: Dict[str,float],
         for k in agg: agg[k]/=s
     return agg
 
+def build_hungarian_rationale(
+    fixture_data: dict,
+    market: str,
+    selection: str,
+    model_prob: float,
+    market_prob: float,
+    odds: float,
+    edge_val: float,
+    is_selected: bool = False,
+    filtering_reasons: list = None
+) -> str:
+    """
+    Generál magyar nyelvű, többmondatos indoklást minden analyzed mérkőzéshez.
+    """
+    # Csapatnevek és alapadatok
+    meta = load_fixture_meta(fixture_data.get("fixture_id", 0))
+    home_name = meta.get("home_name", "Hazai csapat")
+    away_name = meta.get("away_name", "Vendég csapat")
+    league_name = meta.get("league_name", "Ismeretlen liga")
+    tier = fixture_data.get("league_tier", "OTHER")
+    
+    # Számított értékek
+    value = model_prob * odds if odds > 0 else 0
+    margin_details = fixture_data.get("market_prob_details", {})
+    margin = margin_details.get("one_x_two", {}).get("overround", 0)
+    market_diff = model_prob - market_prob
+    
+    # Statisztikai adatok
+    home_rating = fixture_data.get("home_rating", {})
+    away_rating = fixture_data.get("away_rating", {})
+    lambda_home = fixture_data.get("lambda_home", 0)
+    lambda_away = fixture_data.get("lambda_away", 0)
+    
+    # Selejtezési okok
+    reasons = filtering_reasons or []
+    
+    # Magyar nyelvű indoklás felépítése
+    rationale_parts = []
+    
+    # Meccs bemutatása
+    if tier in ["TIER1", "TIER1B"]:
+        tier_desc = "top ligás"
+    else:
+        tier_desc = f"{tier.lower()} szintű"
+    
+    rationale_parts.append(f"A {home_name} - {away_name} {tier_desc} mérkőzés elemzése ({league_name}).")
+    
+    # Modell vs piac elemzés
+    selection_hu = {"home": "hazai győzelem", "away": "vendég győzelem", "draw": "döntetlen"}.get(selection.lower(), selection)
+    rationale_parts.append(
+        f"Modellünk {selection_hu}ra {model_prob*100:.1f}%-os valószínűséget becsül, "
+        f"míg a piac {market_prob*100:.1f}%-ot áraz be."
+    )
+    
+    # Edge és value elemzés
+    if edge_val > 0:
+        rationale_parts.append(
+            f"Ez {edge_val*100:.1f}%-os pozitív edge-et jelent {odds:.2f}-es oddson, "
+            f"ami {value:.2f}-es értékmutatót eredményez."
+        )
+    else:
+        rationale_parts.append(
+            f"A {abs(edge_val)*100:.1f}%-os negatív edge miatt a tipp nem javasolt."
+        )
+    
+    # Margin és piaci információk
+    if margin > 0:
+        rationale_parts.append(f"A piac {margin*100:.1f}%-os marzzsal dolgozik.")
+    
+    if abs(market_diff) > 0.02:
+        diff_desc = "jelentős" if abs(market_diff) > 0.1 else "mérsékelt"
+        rationale_parts.append(f"A piaci különbség {diff_desc} ({market_diff:+.3f}).")
+    
+    # Statisztikai háttér
+    if home_rating.get("combined_rating", 0) > 0 and away_rating.get("combined_rating", 0) > 0:
+        rating_diff = home_rating["combined_rating"] - away_rating["combined_rating"]
+        if abs(rating_diff) > 0.1:
+            stronger = "hazai" if rating_diff > 0 else "vendég"
+            rationale_parts.append(f"A csapat értékelések alapján a {stronger} csapat számít erősebbnek ({rating_diff:+.2f}).")
+    
+    # Lambda értékek (gólvárt)
+    if lambda_home > 0 and lambda_away > 0:
+        rationale_parts.append(
+            f"Várható gólok: hazai {lambda_home:.2f}, vendég {lambda_away:.2f}."
+        )
+    
+    # Selejtezési okok
+    if reasons:
+        reasons_text = ", ".join(reasons)
+        if is_selected:
+            rationale_parts.append(f"A tipp kiválasztva lett, figyelembe véve: {reasons_text}.")
+        else:
+            rationale_parts.append(f"A tipp nem került kiválasztásra a következő okok miatt: {reasons_text}.")
+    
+    return " ".join(rationale_parts)
+
 def build_rationale(market: str,
                     selection: str,
                     model_prob: float,
@@ -1001,6 +1097,39 @@ def build_rationale(market: str,
     if notes:
         parts.append("Notes="+notes)
     return " | ".join(parts)
+
+# =========================================================
+# Audit file handling for non-selected matches
+# =========================================================
+def save_audit_rationale(fixture_data: dict, rationale: str, reason: str = "not_selected"):
+    """
+    Mentse el a nem kiválasztott meccsek indoklását audit fájlba.
+    """
+    audit_dir = DATA_ROOT / "audit"
+    audit_dir.mkdir(exist_ok=True)
+    
+    today = datetime.now(timezone.utc).strftime("%Y%m%d")
+    audit_file = audit_dir / f"rationales_{today}.json"
+    
+    audit_entry = {
+        "fixture_id": fixture_data.get("fixture_id"),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "reason": reason,
+        "rationale": rationale,
+        "league_tier": fixture_data.get("league_tier"),
+        "kickoff_utc": fixture_data.get("kickoff_utc")
+    }
+    
+    # Load existing entries
+    audit_data = []
+    if audit_file.exists():
+        try:
+            audit_data = json.loads(audit_file.read_text(encoding="utf-8"))
+        except:
+            logger.warning("Audit fájl olvasási hiba: %s", audit_file)
+    
+    audit_data.append(audit_entry)
+    safe_write_json(audit_file, audit_data)
 
 # =========================================================
 # Állapot mentés / betöltés
@@ -1917,7 +2046,7 @@ def allocate_stakes(analysis_results: list[dict])->list[dict]:
             strict_flag=None,
             diff_limit=None,
             ensemble_used=enhanced_used,
-            notes=f"Pick stake kelly={k_frac:.4f} diff={diff:+.4f}",
+            notes=f"Pick stake kelly={kelly_d.get(best_sel,0.0):.4f} diff={diff:+.4f}",
             margin_adj_diff=margin_adj_diff,
             raw_edge=raw_edge_val,
             z_edge=z_edge
@@ -1936,6 +2065,166 @@ def allocate_stakes(analysis_results: list[dict])->list[dict]:
             "league_tier": r.get("league_tier")
         })
     return picks
+
+def process_all_analysis_with_hungarian_rationales(analysis_results: list[dict]) -> tuple[list[dict], list[dict]]:
+    """
+    Feldolgozza az összes elemzett mérkőzést és magyar nyelvű indoklást generál.
+    Visszaadja a kiválasztott pickeket és az audit bejegyzéseket.
+    """
+    bankroll = RUNTIME_STATE["bankroll_current"]
+    max_single = bankroll * MAX_SINGLE_STAKE_FRACTION
+    selected_picks = []
+    audit_entries = []
+    
+    for r in analysis_results:
+        # Csak top ligákra koncentrálunk (Tippmixpro ligák)
+        league_tier = r.get("league_tier", "OTHER")
+        league_id = r.get("league_id")
+        
+        # Ellenőrizze, hogy top liga-e (TIER1, TIER1B)
+        is_top_league = league_tier in ["TIER1", "TIER1B"]
+        
+        odds = r.get("odds")
+        if not odds:
+            # Hiányzó odds-ok miatt audit bejegyzés
+            rationale = build_hungarian_rationale(
+                r, "1X2", "home", 0, 0, 0, 0, False, ["hiányzó odds"]
+            )
+            save_audit_rationale(r, rationale, "missing_odds")
+            continue
+        
+        # Margin szűrés
+        filtered_odds = filter_odds_by_margin(odds)
+        if not filtered_odds.get("one_x_two"):
+            rationale = build_hungarian_rationale(
+                r, "1X2", "home", 0, 0, 0, 0, False, ["magas margin"]
+            )
+            save_audit_rationale(r, rationale, "high_margin")
+            continue
+        
+        odds = filtered_odds
+        
+        # Legjobb edge keresése
+        edge_d = r.get("edge", {})
+        kelly_d = r.get("kelly", {})
+        best_sel = None
+        best_edge = 0.0
+        
+        # Döntetlen kizárása 1X2 piacokról ha beállított
+        selections_to_check = ["home", "away"]
+        if not EXCLUDE_DRAW_1X2:
+            selections_to_check.append("draw")
+        
+        for sel in selections_to_check:
+            e = edge_d.get(sel, 0.0)
+            if e > 0 and e > best_edge:
+                best_edge = e
+                best_sel = sel
+        
+        if not best_sel:
+            rationale = build_hungarian_rationale(
+                r, "1X2", "home", 0, 0, 0, 0, False, ["nincs pozitív edge"]
+            )
+            save_audit_rationale(r, rationale, "no_positive_edge")
+            continue
+        
+        sel_odds = odds.get(best_sel)
+        if not sel_odds:
+            rationale = build_hungarian_rationale(
+                r, "1X2", best_sel, 0, 0, 0, 0, False, ["hiányzó selekcióra vonatkozó odds"]
+            )
+            save_audit_rationale(r, rationale, "missing_selection_odds")
+            continue
+        
+        try:
+            sel_odds = float(sel_odds)
+        except:
+            rationale = build_hungarian_rationale(
+                r, "1X2", best_sel, 0, 0, 0, 0, False, ["érvénytelen odds formátum"]
+            )
+            save_audit_rationale(r, rationale, "invalid_odds_format")
+            continue
+        
+        # További szűrések
+        filtering_reasons = []
+        is_selected = True
+        
+        if sel_odds > MAX_ODDS_1X2_PICKS:
+            filtering_reasons.append(f"túl magas odds ({sel_odds} > {MAX_ODDS_1X2_PICKS})")
+            is_selected = False
+        
+        if best_edge > PICK_EDGE_CAP_1X2:
+            filtering_reasons.append(f"túl magas edge ({best_edge} > {PICK_EDGE_CAP_1X2})")
+            is_selected = False
+        
+        # Publikálási küszöb ellenőrzése
+        def passes_publish_threshold(edge_val: float) -> bool:
+            if edge_val < MIN_EDGE_THRESHOLD:
+                return False
+            if TOP_MODE == "all":
+                return edge_val > 0
+            if TOP_MODE == "top_only":
+                return LEAGUE_MANAGER.is_top(league_id) and edge_val >= PUBLISH_MIN_EDGE_TOP
+            if TOP_MODE == "hybrid":
+                if LEAGUE_MANAGER.is_top(league_id):
+                    return edge_val >= PUBLISH_MIN_EDGE_TOP
+                return edge_val >= PUBLISH_MIN_EDGE_OTHER
+            return edge_val > 0
+        
+        if not passes_publish_threshold(best_edge):
+            if not is_top_league:
+                filtering_reasons.append("nem top liga")
+            if best_edge < MIN_EDGE_THRESHOLD:
+                filtering_reasons.append(f"alacsony edge ({best_edge} < {MIN_EDGE_THRESHOLD})")
+            is_selected = False
+        
+        # Tét számítás
+        stake = FIX_STAKE_AMOUNT
+        if stake > max_single:
+            stake = max_single
+        if stake < 1:
+            filtering_reasons.append("túl alacsony tét")
+            is_selected = False
+        
+        # Piaci valószínűség számítása
+        implied = 0
+        try:
+            inv_sum = sum(1/float(odds[k]) for k in ("home", "draw", "away"))
+            implied = (1/sel_odds)/inv_sum if inv_sum > 0 else 0
+        except:
+            pass
+        
+        model_prob = r.get("model_probs", {}).get(best_sel, 0.0)
+        
+        # Magyar nyelvű indoklás generálása
+        rationale = build_hungarian_rationale(
+            r, "1X2", best_sel, model_prob, implied, sel_odds, best_edge, 
+            is_selected, filtering_reasons
+        )
+        
+        if is_selected and is_top_league:
+            # Kiválasztott pick hozzáadása
+            projected = stake * sel_odds
+            picks_entry = {
+                "fixture_id": r["fixture_id"],
+                "selection": best_sel,
+                "edge": round(best_edge, 4),
+                "kelly_fraction": round(kelly_d.get(best_sel, 0.0), 4),
+                "stake": round(stake, 2),
+                "odds": sel_odds,
+                "expected_brutto": round(projected, 2),
+                "kickoff_utc": r["kickoff_utc"],
+                "rationale": rationale,
+                "league_id": league_id,
+                "league_tier": r.get("league_tier")
+            }
+            selected_picks.append(picks_entry)
+        else:
+            # Audit bejegyzés nem kiválasztott meccsekhez
+            reason = "filtered_out" if filtering_reasons else "not_top_league"
+            save_audit_rationale(r, rationale, reason)
+    
+    return selected_picks, audit_entries
 
 def register_picks(picks: list[dict]):
     if picks:
@@ -2784,7 +3073,7 @@ async def run_pipeline(fetch: bool, analyze: bool,
             if res: analyzed_res.append(res)
             if idx%100==0:
                 logger.info("Elemzés haladás: %d / %d", idx, len(valid))
-        picks=allocate_stakes(analyzed_res)
+        picks, audit_entries = process_all_analysis_with_hungarian_rationales(analyzed_res)
         register_picks(picks)
         tickets=select_best_tickets(analyzed_res, only_today=TICKET_ONLY_TODAY)
         if tickets: save_ticket_full_analysis(tickets, DATA_ROOT)

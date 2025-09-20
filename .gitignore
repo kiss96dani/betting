@@ -1,0 +1,6 @@
+# Audit files should not be committed
+audit/
+# Python cache
+__pycache__/
+# Data files
+data/

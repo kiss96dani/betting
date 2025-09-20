@@ -1,0 +1,58 @@
+[
+  {
+    "fixture_id": 99999,
+    "timestamp": "2025-09-20T11:12:28.532999+00:00",
+    "reason": "test_reason",
+    "rationale": "Test Hungarian rationale for audit",
+    "league_tier": "TIER2",
+    "kickoff_utc": "2025-09-20T20:00:00Z"
+  },
+  {
+    "fixture_id": 99999,
+    "timestamp": "2025-09-20T11:12:44.709069+00:00",
+    "reason": "test_reason",
+    "rationale": "Test Hungarian rationale for audit",
+    "league_tier": "TIER2",
+    "kickoff_utc": "2025-09-20T20:00:00Z"
+  },
+  {
+    "fixture_id": 22222,
+    "timestamp": "2025-09-20T11:13:50.526023+00:00",
+    "reason": "high_odds_filtered",
+    "rationale": "A Hazai csapat - Vendég csapat top ligás mérkőzés elemzése (Ismeretlen liga). Modellünk vendég győzelemra 14.0%-os valószínűséget becsül, míg a piac 12.0%-ot áraz be. Ez 2.0%-os pozitív edge-et jelent 8.50-es oddson, ami 1.19-es értékmutatót eredményez. A piac 9.0%-os marzzsal dolgozik. A piaci különbség mérsékelt (+0.020). A csapat értékelések alapján a vendég csapat számít erősebbnek (-0.30). Várható gólok: hazai 0.90, vendég 2.10. A tipp nem került kiválasztásra a következő okok miatt: túl magas odds, alacsony edge.",
+    "league_tier": "TIER1B",
+    "kickoff_utc": "2025-09-20T20:00:00Z"
+  },
+  {
+    "fixture_id": 33333,
+    "timestamp": "2025-09-20T11:13:50.526528+00:00",
+    "reason": "not_top_league",
+    "rationale": "A Hazai csapat - Vendég csapat other szintű mérkőzés elemzése (Ismeretlen liga). Modellünk döntetlenra 28.0%-os valószínűséget becsül, míg a piac 25.0%-ot áraz be. Ez 3.0%-os pozitív edge-et jelent 4.00-es oddson, ami 1.12-es értékmutatót eredményez. A piac 12.0%-os marzzsal dolgozik. A piaci különbség mérsékelt (+0.030). Várható gólok: hazai 1.50, vendég 1.30. A tipp nem került kiválasztásra a következő okok miatt: nem top liga.",
+    "league_tier": "OTHER",
+    "kickoff_utc": "2025-09-20T19:00:00Z"
+  },
+  {
+    "fixture_id": 987654,
+    "timestamp": "2025-09-20T11:14:32.676022+00:00",
+    "reason": "missing_selection_odds",
+    "rationale": "A Hazai csapat - Vendég csapat top ligás mérkőzés elemzése (Ismeretlen liga). Modellünk hazai győzelemra 0.0%-os valószínűséget becsül, míg a piac 0.0%-ot áraz be. A 0.0%-os negatív edge miatt a tipp nem javasolt. A piac 7.0%-os marzzsal dolgozik. A csapat értékelések alapján a hazai csapat számít erősebbnek (+0.13). Várható gólok: hazai 1.70, vendég 1.20. A tipp nem került kiválasztásra a következő okok miatt: hiányzó selekcióra vonatkozó odds.",
+    "league_tier": "TIER1",
+    "kickoff_utc": "2025-09-20T18:00:00Z"
+  },
+  {
+    "fixture_id": 123456,
+    "timestamp": "2025-09-20T11:14:32.676513+00:00",
+    "reason": "missing_selection_odds",
+    "rationale": "A Hazai csapat - Vendég csapat top ligás mérkőzés elemzése (Ismeretlen liga). Modellünk hazai győzelemra 0.0%-os valószínűséget becsül, míg a piac 0.0%-ot áraz be. A 0.0%-os negatív edge miatt a tipp nem javasolt. A piac 8.0%-os marzzsal dolgozik. A csapat értékelések alapján a vendég csapat számít erősebbnek (-0.29). Várható gólok: hazai 0.80, vendég 2.00. A tipp nem került kiválasztásra a következő okok miatt: hiányzó selekcióra vonatkozó odds.",
+    "league_tier": "TIER1",
+    "kickoff_utc": "2025-09-20T20:00:00Z"
+  },
+  {
+    "fixture_id": 555666,
+    "timestamp": "2025-09-20T11:14:32.676883+00:00",
+    "reason": "missing_selection_odds",
+    "rationale": "A Hazai csapat - Vendég csapat other szintű mérkőzés elemzése (Ismeretlen liga). Modellünk hazai győzelemra 0.0%-os valószínűséget becsül, míg a piac 0.0%-ot áraz be. A 0.0%-os negatív edge miatt a tipp nem javasolt. A piac 11.0%-os marzzsal dolgozik. Várható gólok: hazai 1.40, vendég 1.40. A tipp nem került kiválasztásra a következő okok miatt: hiányzó selekcióra vonatkozó odds.",
+    "league_tier": "OTHER",
+    "kickoff_utc": "2025-09-20T19:30:00Z"
+  }
+]
