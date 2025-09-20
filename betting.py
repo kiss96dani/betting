@@ -527,7 +527,73 @@ class FixtureContext:
     fair_odds: dict
 
 # =========================================================
-# LeagueTierManager (változatlan)
+# TOP Liga Management (tournaments.json alapú)
+# =========================================================
+def load_top_leagues_from_tournaments() -> Dict[str, List[str]]:
+    """
+    Betölti a TOP ligákat a tournaments.json fájlból az 'is_top_level' mező alapján.
+    Visszaadja az összes név variációt (name, template_name, translated_name, short_translated_name).
+    """
+    tournaments_path = Path("tournaments.json")
+    top_league_names = set()
+    
+    if not tournaments_path.exists():
+        logger.warning("tournaments.json hiányzik – TOP liga azonosítás korlátozott.")
+        return {"names": [], "count": 0}
+    
+    try:
+        tdata = json.loads(tournaments_path.read_text(encoding="utf-8"))
+        if isinstance(tdata, list):
+            tournaments = tdata
+        else:
+            tournaments = tdata.get("tournaments", [])
+        
+        for tournament in tournaments:
+            if tournament.get("is_top_level", False):
+                # Összes név variáció hozzáadása
+                name_fields = ["name", "template_name", "translated_name", "short_translated_name"]
+                for field in name_fields:
+                    name = tournament.get(field)
+                    if name and isinstance(name, str) and name.strip():
+                        top_league_names.add(name.strip())
+        
+        result = {
+            "names": sorted(list(top_league_names)),
+            "count": len(top_league_names)
+        }
+        
+        logger.info("TOP ligák betöltve tournaments.json-ból: %d név variáció azonosítva", len(top_league_names))
+        for name in sorted(top_league_names):
+            logger.debug("TOP liga név: %s", name)
+            
+        return result
+        
+    except Exception as e:
+        logger.exception("tournaments.json feldolgozási hiba: %s", e)
+        return {"names": [], "count": 0}
+
+def is_top_league_by_name(league_name: str, top_league_names: List[str]) -> bool:
+    """
+    Ellenőrzi, hogy a liga neve megegyezik-e valamelyik TOP liga névvel (kis-nagybetű függetlenül).
+    """
+    if not league_name or not top_league_names:
+        return False
+    
+    league_name_lower = league_name.lower().strip()
+    
+    for top_name in top_league_names:
+        if top_name.lower().strip() == league_name_lower:
+            return True
+        # Részleges egyezés is elfogadható (pl. "Champions League" vs "UEFA Champions League")
+        if len(top_name) > 5 and top_name.lower() in league_name_lower:
+            return True
+        if len(league_name) > 5 and league_name_lower in top_name.lower():
+            return True
+    
+    return False
+
+# =========================================================
+# LeagueTierManager (tournaments.json-nal kiterjesztve)
 # =========================================================
 class LeagueTierManager:
     DEFAULT_TIER_CFG = {
@@ -553,8 +619,11 @@ class LeagueTierManager:
         self.tier_cfg={}
         self.classified={}
         self._top_ids_set=set()
+        # ÚJ: tournaments.json alapú TOP liga nevek
+        self.top_league_data = {"names": [], "count": 0}
         self._load_or_init_config()
         self._load_or_empty_classified()
+        self._load_top_leagues_from_tournaments()
         self._compute_top_ids()
     def _load_or_init_config(self):
         if self.tier_config_path.exists():
@@ -591,15 +660,61 @@ class LeagueTierManager:
     def _save_classified(self):
         self.classify_cache.parent.mkdir(parents=True, exist_ok=True)
         self.classify_cache.write_text(json.dumps(self.classified, indent=2), encoding="utf-8")
+    def _load_top_leagues_from_tournaments(self):
+        """Betölti a TOP ligákat a tournaments.json fájlból."""
+        self.top_league_data = load_top_leagues_from_tournaments()
+        
     def _compute_top_ids(self):
+        # Megtartjuk a régi tier-alapú logikát fallback-ként
         tiers=self.tier_cfg.get("tiers",{})
         top=set()
         for grp in ("TIER1","TIER1B","CUPS_ELITE","NT_MAJOR"):
             for lid in tiers.get(grp, []):
                 top.add(lid)
         self._top_ids_set=top
+        
     def is_top(self, league_id: int)->bool:
+        """
+        Meghatározza, hogy egy liga TOP-e.
+        Elsősorban tournaments.json név alapú, másodsorban ID alapú tier logika.
+        """
+        # Először próbálkozás név alapon
+        league_name = self.get_league_name(league_id)
+        if league_name and self.top_league_data["names"]:
+            is_top_by_name = is_top_league_by_name(league_name, self.top_league_data["names"])
+            if is_top_by_name:
+                return True
+        
+        # Fallback: régi ID-alapú logika
         return league_id in self._top_ids_set
+    
+    def get_league_name(self, league_id: int) -> str:
+        """Lekéri a liga nevét az ID alapján a classified adatokból."""
+        meta = self.classified.get(str(league_id))
+        if meta:
+            return meta.get("name", "")
+        return ""
+    
+    def is_top_with_reason(self, league_id: int, league_name: str = None) -> Tuple[bool, str]:
+        """
+        Meghatározza, hogy egy liga TOP-e, és megindokolja a döntést.
+        Visszaadja: (is_top: bool, reason: str)
+        """
+        if not league_name:
+            league_name = self.get_league_name(league_id)
+        
+        # Először név alapú ellenőrzés
+        if league_name and self.top_league_data["names"]:
+            is_top_by_name = is_top_league_by_name(league_name, self.top_league_data["names"])
+            if is_top_by_name:
+                return True, f"TOP liga (név alapján): {league_name}"
+        
+        # Fallback: ID-alapú tier logika
+        if league_id in self._top_ids_set:
+            tier = self.tier_of(league_id)
+            return True, f"TOP liga (tier alapján): {league_name} (tier: {tier})"
+        
+        return False, f"Nem TOP liga: {league_name or f'ID={league_id}'}"
     def tier_of(self, league_id: int)->str:
         for k,ids in self.tier_cfg.get("tiers",{}).items():
             if league_id in ids: return k
@@ -971,9 +1086,70 @@ def build_rationale(market: str,
                     notes: str = "",
                     margin_adj_diff: float | None = None,
                     raw_edge: float | None = None,
-                    z_edge: float | None = None) -> str:
-    diff=model_prob-market_prob
-    parts=[
+                    z_edge: float | None = None,
+                    league_id: int = None,
+                    league_name: str = None) -> str:
+    """
+    Részletes magyar nyelvű indoklás generálása minden tipphez.
+    """
+    diff = model_prob - market_prob
+    
+    # Magyar piac név fordítás
+    market_hu = {
+        "1X2": "Végeredmény",
+        "BTTS": "Mindkét csapat gólokat szerez",
+        "O/U 2.5": "Gólok száma (2.5 felett/alatt)"
+    }.get(market, market)
+    
+    # Szelekció magyar fordítása
+    selection_hu = {
+        "HOME": "Hazai győzelem",
+        "AWAY": "Vendég győzelem", 
+        "DRAW": "Döntetlen",
+        "YES": "Igen",
+        "NO": "Nem",
+        "OVER": "Felett",
+        "UNDER": "Alatt"
+    }.get(selection.upper(), selection)
+    
+    # Liga információ és TOP státusz
+    top_status = ""
+    if league_id and LEAGUE_MANAGER:
+        is_top, reason = LEAGUE_MANAGER.is_top_with_reason(league_id, league_name)
+        if is_top:
+            top_status = f" 🌟 {reason}"
+        else:
+            top_status = f" ⚪ {reason}"
+    
+    # Statisztikai magyarázat
+    confidence_level = "Alacsony"
+    if abs(diff) >= 0.15:
+        confidence_level = "Magas"
+    elif abs(diff) >= 0.08:
+        confidence_level = "Közepes"
+    
+    # Edge kategorizálás
+    edge_desc = "Gyenge"
+    if edge_val >= 0.15:
+        edge_desc = "Kiváló"
+    elif edge_val >= 0.08:
+        edge_desc = "Jó"
+    elif edge_val >= 0.04:
+        edge_desc = "Elfogadható"
+    
+    # Magyar nyelvű fő indoklás
+    explanation = f"""
+🎯 TIPP: {selection_hu} ({market_hu})
+📊 Elemzés: A modellünk {model_prob:.1%} valószínűséget ad erre az eredményre, míg a piac {market_prob:.1%}-ot ár be. 
+📈 Értékítélet: {edge_desc} value bet ({edge_val:.1%} edge), bizalmi szint: {confidence_level}
+⚽ Liga státusz:{top_status}
+🔢 Gólvárakozás: Hazai {lambda_home:.2f}, Vendég {lambda_away:.2f}
+💪 Erőviszony: {'Hazai előny' if rating_diff > 0.1 else 'Vendég előny' if rating_diff < -0.1 else 'Kiegyenlített'} ({rating_diff:+.2f})
+🧠 Modell: {'Ensemble' if ensemble_used else 'Alap'} algoritmus
+""".strip()
+    
+    # Technikai részletek (eredeti formátumban)
+    tech_parts = [
         f"Piac={market}",
         f"Pick={selection}",
         f"Model={model_prob:.4f}",
@@ -982,25 +1158,31 @@ def build_rationale(market: str,
         f"Odds={odds:.2f}",
         f"Edge={edge_val*100:.1f}%"
     ]
+    
     if raw_edge is not None:
-        parts.append(f"RawEdge={raw_edge:+.4f}")
+        tech_parts.append(f"RawEdge={raw_edge:+.4f}")
     if margin_adj_diff is not None:
-        parts.append(f"AdjDiff={margin_adj_diff:+.4f}")
+        tech_parts.append(f"AdjDiff={margin_adj_diff:+.4f}")
     if z_edge is not None:
-        parts.append(f"Z={z_edge:+.2f}")
-    parts.extend([
+        tech_parts.append(f"Z={z_edge:+.2f}")
+    
+    tech_parts.extend([
         f"λH={lambda_home:.2f}",
         f"λA={lambda_away:.2f}",
         f"RatingDiff={rating_diff:+.3f}",
         f"Ens={'Y' if ensemble_used else 'N'}"
     ])
+    
     if strict_flag is not None:
-        parts.append("Qual=" + ("STRICT" if strict_flag else "FALLBACK"))
+        tech_parts.append("Qual=" + ("STRICT" if strict_flag else "FALLBACK"))
     if diff_limit is not None:
-        parts.append(f"DiffTol={diff_limit:.2f}")
+        tech_parts.append(f"DiffTol={diff_limit:.2f}")
     if notes:
-        parts.append("Notes="+notes)
-    return " | ".join(parts)
+        tech_parts.append("Notes=" + notes)
+    
+    technical_details = " | ".join(tech_parts)
+    
+    return f"{explanation}\n\n📋 Technikai adatok: {technical_details}"
 
 # =========================================================
 # Állapot mentés / betöltés
@@ -1229,13 +1411,27 @@ async def fetch_leagues_from_odds_api() -> Dict[str, dict]:
 async def fetch_upcoming_fixtures(client: APIFootballClient, days_ahead: int)->list[dict]:
     fixtures=[]
     today=date.today()
+    total_fixtures_found = 0
+    top_fixtures_count = 0
+    
+    # Statisztikák gyűjtése
+    league_stats = {}
+    
     for delta in range(days_ahead+1):
         d=today + timedelta(days=delta)
         js=await client.get("/fixtures", {"date": d.isoformat()})
         resp=js.get("response") or []
         for fx in resp:
+            total_fixtures_found += 1
             league_id=fx.get("league",{}).get("id")
+            league_name=fx.get("league",{}).get("name","")
+            
             if league_id:
+                # Statisztika gyűjtés
+                if league_name not in league_stats:
+                    league_stats[league_name] = {"total": 0, "included": 0, "is_top": False}
+                league_stats[league_name]["total"] += 1
+                
                 if LEAGUE_WHITELIST and league_id not in LEAGUE_WHITELIST: continue
                 if league_id in LEAGUE_BLACKLIST: continue
                 
@@ -1245,13 +1441,52 @@ async def fetch_upcoming_fixtures(client: APIFootballClient, days_ahead: int)->l
                     if tier not in ["TIER1", "TIER1B"]:
                         continue
                 
+                # TOP_MODE alapú szűrés
+                should_include = False
+                is_top_league = False
+                
                 if TOP_MODE=="top_only":
-                    if not LEAGUE_MANAGER.is_top(league_id): continue
+                    is_top_league, reason = LEAGUE_MANAGER.is_top_with_reason(league_id, league_name)
+                    should_include = is_top_league
+                    if should_include:
+                        top_fixtures_count += 1
+                        logger.debug("TOP liga mérkőzés: %s - %s", league_name, reason)
                 elif TOP_MODE=="hybrid":
-                    if LEAGUE_MANAGER.tier_of(league_id)=="EXCLUDE": continue
-                else:
-                    if LEAGUE_MANAGER.tier_of(league_id)=="EXCLUDE": continue
-            fixtures.append(fx)
+                    if LEAGUE_MANAGER.tier_of(league_id)=="EXCLUDE": 
+                        should_include = False
+                    else:
+                        should_include = True
+                        is_top_league, _ = LEAGUE_MANAGER.is_top_with_reason(league_id, league_name)
+                        if is_top_league:
+                            top_fixtures_count += 1
+                else:  # "all"
+                    if LEAGUE_MANAGER.tier_of(league_id)=="EXCLUDE": 
+                        should_include = False
+                    else:
+                        should_include = True
+                        is_top_league, _ = LEAGUE_MANAGER.is_top_with_reason(league_id, league_name)
+                        if is_top_league:
+                            top_fixtures_count += 1
+                
+                if should_include:
+                    fixtures.append(fx)
+                    league_stats[league_name]["included"] += 1
+                    league_stats[league_name]["is_top"] = is_top_league
+    
+    # Statisztikák logolása
+    logger.info("Mérkőzés szűrési statisztika:")
+    logger.info("  Összes mérkőzés: %d", total_fixtures_found)
+    logger.info("  TOP liga mérkőzések: %d", top_fixtures_count)
+    logger.info("  Beválogatott mérkőzések: %d", len(fixtures))
+    logger.info("  TOP_MODE: %s", TOP_MODE)
+    logger.info("  Azonosított TOP ligák száma: %d", LEAGUE_MANAGER.top_league_data["count"])
+    
+    # TOP ligák részletes listázása
+    if LEAGUE_MANAGER.top_league_data["names"]:
+        logger.info("TOP liga nevek:")
+        for name in LEAGUE_MANAGER.top_league_data["names"]:
+            logger.info("  - %s", name)
+    
     uniq={}
     for f in fixtures:
         fid=f.get("fixture",{}).get("id")
@@ -1920,7 +2155,9 @@ def allocate_stakes(analysis_results: list[dict])->list[dict]:
             notes=f"Pick stake kelly={k_frac:.4f} diff={diff:+.4f}",
             margin_adj_diff=margin_adj_diff,
             raw_edge=raw_edge_val,
-            z_edge=z_edge
+            z_edge=z_edge,
+            league_id=league_id,
+            league_name=r.get("league_name")
         )
         picks.append({
             "fixture_id": r["fixture_id"],
@@ -2029,7 +2266,9 @@ def select_best_tickets(analyzed_results: list[dict], only_today: bool=True) -> 
                                           "enhanced_model" in r, "Ticket strict",
                                           margin_adj_diff=margin_adj,
                                           raw_edge=raw_edge,
-                                          z_edge=z_e)
+                                          z_edge=z_e,
+                                          league_id=r.get("league_id"),
+                                          league_name=r.get("league_name"))
                 best_edge_1x2=e
                 best_1x2={
                     "fixture_id": r["fixture_id"],
@@ -2098,7 +2337,9 @@ def select_best_tickets(analyzed_results: list[dict], only_today: bool=True) -> 
                         notes="Ticket strict",
                         margin_adj_diff=margin_adj,
                         raw_edge=raw_edge_val,
-                        z_edge=z_e
+                        z_edge=z_e,
+                        league_id=r.get("league_id"),
+                        league_name=r.get("league_name")
                     )
                     best_edge_btts=e
                     best_btts={
@@ -2131,7 +2372,9 @@ def select_best_tickets(analyzed_results: list[dict], only_today: bool=True) -> 
                         notes="Fallback jelölt",
                         margin_adj_diff=margin_adj,
                         raw_edge=raw_edge_val,
-                        z_edge=z_e
+                        z_edge=z_e,
+                        league_id=r.get("league_id"),
+                        league_name=r.get("league_name")
                     )
                     candidate_btts_fallback.append({
                         "fixture_id": r["fixture_id"],
@@ -2207,7 +2450,9 @@ def select_best_tickets(analyzed_results: list[dict], only_today: bool=True) -> 
                         notes="Ticket strict",
                         margin_adj_diff=margin_adj,
                         raw_edge=raw_edge_val,
-                        z_edge=z_e
+                        z_edge=z_e,
+                        league_id=r.get("league_id"),
+                        league_name=r.get("league_name")
                     )
                     best_edge_ou=e
                     best_ou={
@@ -2240,7 +2485,9 @@ def select_best_tickets(analyzed_results: list[dict], only_today: bool=True) -> 
                         notes="Fallback jelölt",
                         margin_adj_diff=margin_adj,
                         raw_edge=raw_edge_val,
-                        z_edge=z_e
+                        z_edge=z_e,
+                        league_id=r.get("league_id"),
+                        league_name=r.get("league_name")
                     )
                     candidate_ou_fallback.append({
                         "fixture_id": r["fixture_id"],
@@ -2922,10 +3169,30 @@ class TelegramBot:
                 await self.send(f"Jelenlegi TOP_MODE={TOP_MODE}. Használat: /mode top_only|hybrid|all", chat_id)
         elif cmd == "/tiers":
             counts = LEAGUE_MANAGER.summarize_tiers()
-            lines = [f"Tier statisztika (összes={sum(counts.values())}):"]
+            lines = [f"🏆 Liga Statisztika (összes: {sum(counts.values())})"]
+            lines.append("")
+            
+            # Tier alapú statisztika
+            lines.append("📊 Tier alapú besorolás:")
             for k in sorted(counts.keys()):
-                lines.append(f"- {k}: {counts[k]}")
-            lines.append(f"TOP_MODE={TOP_MODE}")
+                emoji = "🥇" if k == "TIER1" else "🥈" if k == "TIER1B" else "🏆" if "ELITE" in k else "⚽"
+                lines.append(f"  {emoji} {k}: {counts[k]} liga")
+            
+            lines.append("")
+            lines.append(f"🎯 TOP_MODE: {TOP_MODE}")
+            
+            # TOP liga információk tournaments.json-ból
+            top_data = LEAGUE_MANAGER.top_league_data
+            lines.append(f"🌟 TOP ligák (tournaments.json): {top_data['count']} név")
+            
+            if top_data['names']:
+                lines.append("")
+                lines.append("🏅 Azonosított TOP liga nevek:")
+                for i, name in enumerate(top_data['names'][:10], 1):  # Max 10 név
+                    lines.append(f"  {i}. {name}")
+                if len(top_data['names']) > 10:
+                    lines.append(f"  ... és még {len(top_data['names'])-10} további")
+            
             await self.send("\n".join(lines), chat_id)
         elif cmd == "/leagues":
             if not args:
