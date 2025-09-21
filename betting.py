@@ -1413,10 +1413,6 @@ async def fetch_upcoming_fixtures(client: APIFootballClient, days_ahead: int)->l
     fixtures=[]
     today=date.today()
     total_fixtures_found = 0
-    top_fixtures_count = 0
-    
-    # Statisztikák gyűjtése
-    league_stats = {}
     
     for delta in range(days_ahead+1):
         d=today + timedelta(days=delta)
@@ -1425,68 +1421,15 @@ async def fetch_upcoming_fixtures(client: APIFootballClient, days_ahead: int)->l
         for fx in resp:
             total_fixtures_found += 1
             league_id=fx.get("league",{}).get("id")
-            league_name=fx.get("league",{}).get("name","")
             
             if league_id:
-                # Statisztika gyűjtés
-                if league_name not in league_stats:
-                    league_stats[league_name] = {"total": 0, "included": 0, "is_top": False}
-                league_stats[league_name]["total"] += 1
-                
-                if LEAGUE_WHITELIST and league_id not in LEAGUE_WHITELIST: continue
-                if league_id in LEAGUE_BLACKLIST: continue
-                
-                # Új tier-alapú szűrés: csak TIER1 és TIER1B ligák
-                if ENABLE_TIER_FILTERING:
-                    tier = LEAGUE_MANAGER.tier_of(league_id)
-                    if tier not in ["TIER1", "TIER1B"]:
-                        continue
-                
-                # TOP_MODE alapú szűrés
-                should_include = False
-                is_top_league = False
-                
-                if TOP_MODE=="top_only":
-                    is_top_league, reason = LEAGUE_MANAGER.is_top_with_reason(league_id, league_name)
-                    should_include = is_top_league
-                    if should_include:
-                        top_fixtures_count += 1
-                        logger.debug("TOP liga mérkőzés: %s - %s", league_name, reason)
-                elif TOP_MODE=="hybrid":
-                    if LEAGUE_MANAGER.tier_of(league_id)=="EXCLUDE": 
-                        should_include = False
-                    else:
-                        should_include = True
-                        is_top_league, _ = LEAGUE_MANAGER.is_top_with_reason(league_id, league_name)
-                        if is_top_league:
-                            top_fixtures_count += 1
-                else:  # "all"
-                    if LEAGUE_MANAGER.tier_of(league_id)=="EXCLUDE": 
-                        should_include = False
-                    else:
-                        should_include = True
-                        is_top_league, _ = LEAGUE_MANAGER.is_top_with_reason(league_id, league_name)
-                        if is_top_league:
-                            top_fixtures_count += 1
-                
-                if should_include:
-                    fixtures.append(fx)
-                    league_stats[league_name]["included"] += 1
-                    league_stats[league_name]["is_top"] = is_top_league
+                # No filtering - include all fixtures
+                fixtures.append(fx)
     
-    # Statisztikák logolása
-    logger.info("Mérkőzés szűrési statisztika:")
-    logger.info("  Összes mérkőzés: %d", total_fixtures_found)
-    logger.info("  TOP liga mérkőzések: %d", top_fixtures_count)
-    logger.info("  Beválogatott mérkőzések: %d", len(fixtures))
-    logger.info("  TOP_MODE: %s", TOP_MODE)
-    logger.info("  Azonosított TOP ligák száma: %d", LEAGUE_MANAGER.top_league_data["count"])
-    
-    # TOP ligák részletes listázása
-    if LEAGUE_MANAGER.top_league_data["names"]:
-        logger.info("TOP liga nevek:")
-        for name in LEAGUE_MANAGER.top_league_data["names"]:
-            logger.info("  - %s", name)
+    # Basic statistics
+    logger.info("API-Football fixture statistics:")
+    logger.info("  Total fixtures found: %d", total_fixtures_found)
+    logger.info("  Fixtures included: %d", len(fixtures))
     
     uniq={}
     for f in fixtures:
@@ -2208,13 +2151,8 @@ def allocate_stakes(analysis_results: list[dict])->list[dict]:
             if edge_val < MIN_EDGE_THRESHOLD:
                 return False
                 
-            if TOP_MODE=="all": return edge_val>0
-            if TOP_MODE=="top_only":
-                return LEAGUE_MANAGER.is_top(league_id) and edge_val>=PUBLISH_MIN_EDGE_TOP
-            if TOP_MODE=="hybrid":
-                if LEAGUE_MANAGER.is_top(league_id): return edge_val>=PUBLISH_MIN_EDGE_TOP
-                return edge_val>=PUBLISH_MIN_EDGE_OTHER
-            return edge_val>0
+            # No league-based filtering - use simple edge threshold
+            return edge_val > 0
         edge_d=r.get("edge",{})
         kelly_d=r.get("kelly",{})
         best_sel=None; best_edge=0.0
@@ -2359,10 +2297,7 @@ def select_best_tickets_enhanced(analyzed_results: list[dict], only_today: bool=
         except: return None
         
     def allow_ticket_for_public(r: dict, market: str)->bool:
-        league_id=r.get("league_id")
-        if TOP_MODE=="all": return True
-        if TOP_MODE=="top_only": return LEAGUE_MANAGER.is_top(league_id)
-        if TOP_MODE=="hybrid": return LEAGUE_MANAGER.is_top(league_id)
+        # No league filtering - allow all matches
         return True
 
     # Collect all candidates for each market
@@ -2558,10 +2493,7 @@ def select_best_tickets(analyzed_results: list[dict], only_today: bool=True) -> 
             return {k:inv[k]/s for k in ("home","draw","away")}
         except: return None
     def allow_ticket_for_public(r: dict, market: str)->bool:
-        league_id=r.get("league_id")
-        if TOP_MODE=="all": return True
-        if TOP_MODE=="top_only": return LEAGUE_MANAGER.is_top(league_id)
-        if TOP_MODE=="hybrid": return LEAGUE_MANAGER.is_top(league_id)
+        # No league filtering - allow all matches
         return True
     best_1x2=None; best_edge_1x2=-1
     for r in analyzed_results:
@@ -2897,7 +2829,7 @@ def save_ticket_full_analysis(tickets: dict, root: Path)->Optional[Path]:
     out={
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "local_tz": LOCAL_TZ,
-        "top_mode": TOP_MODE,
+        "tippmix_enabled": USE_TIPPMIX,
         "tickets": tickets,
         "fixtures": items
     }
@@ -3479,58 +3411,78 @@ async def run_pipeline(fetch: bool, analyze: bool,
     if fetch:
         async with APIFootballClient(API_KEY, API_BASE) as client:
             if fixture_ids:
+                # Handle specific fixture IDs request
                 fixture_objs=[]
                 for fid in fixture_ids:
                     js=await client.get("/fixtures", {"id": fid})
                     resp=js.get("response") or []
                     if resp: fixture_objs.append(resp[0])
+                logger.info("Specific fixtures requested: %d", len(fixture_objs))
             else:
-                fixture_objs=await fetch_upcoming_fixtures(client, days_ahead)
-            logger.info("API-Football fixture jelöltek: %d (TOP_MODE=%s)", len(fixture_objs), TOP_MODE)
-            if USE_TIPPMIX:
-                logger.info("TippmixPro integráció – meccsek párosítása...")
-                tipp_matches=await tippmix_fetch_and_map(TIPPMIX_DAYS_AHEAD)
-                logger.info("TippmixPro MATCH rekordok: %d", len(tipp_matches))
-                tip_index=[]
-                for tm in tipp_matches.values():
-                    home=tm.get("homeParticipantName") or ""
-                    away=tm.get("awayParticipantName") or ""
-                    start_ms=tm.get("startTime")
-                    tip_index.append({
-                        "match_id": tm.get("id"),
-                        "home_n": normalize_team_name(home),
-                        "away_n": normalize_team_name(away),
-                        "start_ms": start_ms,
-                        "raw": tm
-                    })
-                matched=[]; mapping_api_to_tip={}
-                for fx in fixture_objs:
-                    fixture=fx.get("fixture",{}) or {}
-                    teams=fx.get("teams",{}) or {}
-                    fid=fixture.get("id"); ts=fixture.get("timestamp")
-                    if not (fid and ts and teams.get("home") and teams.get("away")): continue
-                    home_name=teams["home"].get("name","")
-                    away_name=teams["away"].get("name","")
-                    hn=normalize_team_name(home_name)
-                    an=normalize_team_name(away_name)
-                    ts_ms=ts*1000
-                    best=None; best_score=0
-                    for tm in tip_index:
-                        if tm["start_ms"] is None: continue
-                        if abs(tm["start_ms"] - ts_ms) > TIPPMIX_TIME_TOLERANCE_MIN*60*1000: continue
-                        sim_home=similarity(hn, tm["home_n"])
-                        sim_away=similarity(an, tm["away_n"])
-                        sim=(sim_home+sim_away)/2
-                        if sim>best_score:
-                            best_score=sim; best=tm
-                    if best and best_score>=TIPPMIX_SIMILARITY_THRESHOLD:
-                        mapping_api_to_tip[fid]=best["match_id"]
-                        matched.append(fx)
-                logger.info("Párosított fixturek: %d / %d (threshold=%.2f)", len(matched), len(fixture_objs), TIPPMIX_SIMILARITY_THRESHOLD)
-                fixture_objs=matched
-                tippmix_mapping=mapping_api_to_tip
-            else:
-                logger.info("TippmixPro integráció kikapcsolva (USE_TIPPMIX=0).")
+                # NEW WORKFLOW: Start with TippmixPro as primary source
+                logger.info("Starting TippmixPro-first workflow - getting all available matches...")
+                try:
+                    tipp_matches=await tippmix_fetch_and_map(TIPPMIX_DAYS_AHEAD)
+                    logger.info("TippmixPro MATCH rekordok: %d", len(tipp_matches))
+                except Exception as e:
+                    logger.warning("TippmixPro connection failed: %s", e)
+                    tipp_matches = {}
+                
+                if not tipp_matches:
+                    logger.warning("No TippmixPro matches found, falling back to API-Football...")
+                    fixture_objs=await fetch_upcoming_fixtures(client, days_ahead)
+                    logger.info("API-Football fallback fixtures: %d", len(fixture_objs))
+                else:
+                    # Get API-Football data for all days to enable matching
+                    logger.info("Fetching API-Football data for statistical analysis...")
+                    all_api_fixtures=await fetch_upcoming_fixtures(client, days_ahead)
+                    logger.info("API-Football fixtures available for matching: %d", len(all_api_fixtures))
+                    
+                    # Create API-Football index for matching
+                    api_index=[]
+                    for fx in all_api_fixtures:
+                        fixture=fx.get("fixture",{}) or {}
+                        teams=fx.get("teams",{}) or {}
+                        fid=fixture.get("id"); ts=fixture.get("timestamp")
+                        if not (fid and ts and teams.get("home") and teams.get("away")): continue
+                        home_name=teams["home"].get("name","")
+                        away_name=teams["away"].get("name","")
+                        api_index.append({
+                            "fixture_id": fid,
+                            "home_n": normalize_team_name(home_name),
+                            "away_n": normalize_team_name(away_name),
+                            "timestamp_ms": ts*1000,
+                            "fixture_obj": fx
+                        })
+                    
+                    # Match TippmixPro matches with API-Football data
+                    matched=[]; mapping_api_to_tip={}
+                    for tm in tipp_matches.values():
+                        home=tm.get("homeParticipantName") or ""
+                        away=tm.get("awayParticipantName") or ""
+                        start_ms=tm.get("startTime")
+                        if not start_ms: continue
+                        
+                        hn=normalize_team_name(home)
+                        an=normalize_team_name(away)
+                        
+                        best=None; best_score=0
+                        for api_match in api_index:
+                            if abs(api_match["timestamp_ms"] - start_ms) > TIPPMIX_TIME_TOLERANCE_MIN*60*1000: continue
+                            sim_home=similarity(hn, api_match["home_n"])
+                            sim_away=similarity(an, api_match["away_n"])
+                            sim=(sim_home+sim_away)/2
+                            if sim>best_score:
+                                best_score=sim; best=api_match
+                        
+                        if best and best_score>=TIPPMIX_SIMILARITY_THRESHOLD:
+                            mapping_api_to_tip[best["fixture_id"]]=tm.get("id")
+                            matched.append(best["fixture_obj"])
+                    
+                    logger.info("TippmixPro matches matched with API-Football: %d / %d (threshold=%.2f)", 
+                              len(matched), len(tipp_matches), TIPPMIX_SIMILARITY_THRESHOLD)
+                    fixture_objs=matched
+                    tippmix_mapping=mapping_api_to_tip
             filtered=[]
             for fx in fixture_objs:
                 status=fx.get("fixture",{}).get("status",{}).get("short")
@@ -3596,7 +3548,7 @@ async def run_pipeline(fetch: bool, analyze: bool,
         "picks_count": len(picks),
         "picks": picks,
         "tickets": tickets,
-        "top_mode": TOP_MODE,
+        "tippmix_enabled": USE_TIPPMIX,
         "use_tippmix": USE_TIPPMIX
     }
     picks_file=DATA_ROOT / f"picks_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
@@ -3692,90 +3644,6 @@ class TelegramBot:
                     logger.exception("Polling hiba – %.1fs múlva újra.", wait_s)
                     await asyncio.sleep(wait_s)
                     backoff = min(backoff * 2, max_backoff)
-    def format_ticket_message(self, enhanced_tickets: dict) -> str:
-        """
-        Unified ticket formatting function for consistent display in both /ticket and /run commands
-        """
-        def fmt_tip(entry, title):
-            if not entry: return f"{title}:\n  Nincs ajánlás."
-            
-            # New enhanced telegram format
-            market_emoji = {"1X2": "⚽", "BTTS": "🥅", "O/U 2.5": "📊"}
-            market_hu = {"1X2": "1X2", "BTTS": "BTTS", "O/U 2.5": "O/U 2.5"}
-            
-            # Parse selection for Hungarian display
-            selection = entry.get('selection', '')
-            selection_hu = selection
-            if 'home' in selection.lower():
-                selection_hu = "Hazai győzelem"
-            elif 'away' in selection.lower():
-                selection_hu = "Vendég győzelem"
-            elif 'draw' in selection.lower():
-                selection_hu = "Döntetlen"
-            elif selection.upper() == "YES":
-                selection_hu = "Igen"
-            elif selection.upper() == "NO":
-                selection_hu = "Nem"
-            elif "OVER" in selection.upper():
-                selection_hu = "Felett 2.5"
-            elif "UNDER" in selection.upper():
-                selection_hu = "Alatt 2.5"
-            
-            # Confidence level based on edge value
-            edge_val = entry.get('edge', 0)
-            confidence = "Alacsony"
-            if edge_val >= 0.15:
-                confidence = "Magas"
-            elif edge_val >= 0.08:
-                confidence = "Közepes"
-            
-            # Market strength calculation (if available)
-            market_strength = entry.get('market_strength', None)
-            market_strength_str = ""
-            if market_strength is not None:
-                market_strength_str = f"\n💪 Piac-erő: {market_strength:.1f}%"
-            
-            # Model and market probabilities
-            model_prob = entry.get('model_prob', 0) * 100
-            market_prob = entry.get('market_prob', 0) * 100
-            
-            # Format kickoff time
-            kickoff = entry.get('kickoff_local', entry.get('kickoff_utc', '?'))
-            
-            return (
-                f"{market_emoji.get(title, '⚽')} {market_hu.get(title, title)} – {entry.get('league_name','?')}\n"
-                f"{entry.get('home_name','?')} vs {entry.get('away_name','?')}\n"
-                f"🕒 {kickoff}\n"
-                f"🎯 Tipp: {selection_hu} @ {entry['odds']}\n"
-                f"📊 Modell: {model_prob:.1f}% | Piac: {market_prob:.1f}%\n"
-                f"📈 Érték: +{edge_val*100:.1f}%\n"
-                f"🔒 Bizalom: {confidence}{market_strength_str}"
-            )
-        
-        def fmt_enhanced_tips(entries, title):
-            if not entries: 
-                return f"🚫 {title}: Nincs ajánlás"
-            
-            results = []
-            for i, entry in enumerate(entries[:2]):  # Max 2 tips per market
-                result = fmt_tip(entry, title)
-                if i > 0:  # Add separator for multiple tips
-                    result = "─" * 25 + "\n" + result
-                results.append(result)
-            return "\n".join(results)
-        
-        msg_parts = [
-            fmt_enhanced_tips(enhanced_tickets.get("x1x2", []), "1X2"),
-            fmt_enhanced_tips(enhanced_tickets.get("btts", []), "BTTS"), 
-            fmt_enhanced_tips(enhanced_tickets.get("overunder", []), "O/U 2.5")
-        ]
-        
-        msg = "\n\n".join([part for part in msg_parts if "Nincs ajánlás" not in part])
-        if not msg:
-            msg = "🚫 Nincs tipp ma"
-        
-        return msg
-
     async def handle_command(self, text: str, chat_id: str):
         parts = text.split()
         cmd = parts[0].lower()
@@ -3792,18 +3660,13 @@ class TelegramBot:
                 "/cleanup\n"
                 "/refresh_tickets\n"
                 "/dailyreport\n"
-                "/mode <top_only|hybrid|all>\n"
+                "/mode (liga szűrés letiltva)\n"
                 "/tiers | /leagues <minta> | /reloadtiers\n"
                 "/updatecal | /retraincal | /exportbayes\n"
                 "/tippmixstats\n"
                 "/stop", chat_id)
         elif cmd == "/mode":
-            if args and args[0] in ("top_only","hybrid","all"):
-                global TOP_MODE
-                TOP_MODE = args[0]
-                await self.send(f"TOP_MODE beállítva: {TOP_MODE}", chat_id)
-            else:
-                await self.send(f"Jelenlegi TOP_MODE={TOP_MODE}. Használat: /mode top_only|hybrid|all", chat_id)
+            await self.send("Liga szűrés letiltva - minden elérhető TippmixPro meccs feldolgozásra kerül.", chat_id)
         elif cmd == "/tiers":
             counts = LEAGUE_MANAGER.summarize_tiers()
             lines = [f"🏆 Liga Statisztika (összes: {sum(counts.values())})"]
@@ -3816,7 +3679,7 @@ class TelegramBot:
                 lines.append(f"  {emoji} {k}: {counts[k]} liga")
             
             lines.append("")
-            lines.append(f"🎯 TOP_MODE: {TOP_MODE}")
+            lines.append(f"🎯 Liga szűrés: KIKAPCSOLVA (minden meccs)")
             
             # TOP liga információk tournaments.json-ból
             top_data = LEAGUE_MANAGER.top_league_data
@@ -3882,7 +3745,7 @@ class TelegramBot:
                 await self.send(
                     f"Utolsó futás: fetched={len(summ['fetched'])} "
                     f"analyzed={summ['analyzed_count']} picks={summ['picks_count']} "
-                    f"file={self.runtime.get('last_picks_file')} TOP_MODE={TOP_MODE}{tm_info}", chat_id)
+                    f"file={self.runtime.get('last_picks_file')}{tm_info}", chat_id)
         elif cmd == "/picks":
             summ = self.runtime.get("last_summary")
             if not summ:
@@ -3901,15 +3764,91 @@ class TelegramBot:
                     if len(picks)>30: lines.append(f"... összesen {len(picks)}")
                     await self.send("\n".join(lines), chat_id)
         elif cmd in ("/ticket","/szelveny"):
-            # Use enhanced ticket selection for best value/edge tips (consistent with /run command)
+            def fmt(entry, title):
+                if not entry: return f"{title}:\n  Nincs ajánlás."
+                
+                # New enhanced telegram format
+                market_emoji = {"1X2": "⚽", "BTTS": "🥅", "O/U 2.5": "📊"}
+                market_hu = {"1X2": "1X2", "BTTS": "BTTS", "O/U 2.5": "O/U 2.5"}
+                
+                # Parse selection for Hungarian display
+                selection = entry.get('selection', '')
+                selection_hu = selection
+                if 'home' in selection.lower():
+                    selection_hu = "Hazai győzelem"
+                elif 'away' in selection.lower():
+                    selection_hu = "Vendég győzelem"
+                elif 'draw' in selection.lower():
+                    selection_hu = "Döntetlen"
+                elif selection.upper() == "YES":
+                    selection_hu = "Igen"
+                elif selection.upper() == "NO":
+                    selection_hu = "Nem"
+                elif "OVER" in selection.upper():
+                    selection_hu = "Felett 2.5"
+                elif "UNDER" in selection.upper():
+                    selection_hu = "Alatt 2.5"
+                
+                # Confidence level based on edge value
+                edge_val = entry.get('edge', 0)
+                confidence = "Alacsony"
+                if edge_val >= 0.15:
+                    confidence = "Magas"
+                elif edge_val >= 0.08:
+                    confidence = "Közepes"
+                
+                # Market strength calculation (if available)
+                market_strength = entry.get('market_strength', None)
+                market_strength_str = ""
+                if market_strength is not None:
+                    market_strength_str = f"\n💪 Piac-erő: {market_strength:.1f}%"
+                
+                # Model and market probabilities
+                model_prob = entry.get('model_prob', 0) * 100
+                market_prob = entry.get('market_prob', 0) * 100
+                
+                # Format kickoff time
+                kickoff = entry.get('kickoff_local', entry.get('kickoff_utc', '?'))
+                
+                return (
+                    f"{market_emoji.get(title, '⚽')} {market_hu.get(title, title)} – {entry.get('league_name','?')}\n"
+                    f"{entry.get('home_name','?')} vs {entry.get('away_name','?')}\n"
+                    f"🕒 {kickoff}\n"
+                    f"🎯 Tipp: {selection_hu} @ {entry['odds']}\n"
+                    f"📊 Modell: {model_prob:.1f}% | Piac: {market_prob:.1f}%\n"
+                    f"📈 Érték: +{edge_val*100:.1f}%\n"
+                    f"🔒 Bizalom: {confidence}{market_strength_str}"
+                )
+            
+            # Use enhanced ticket selection for multiple tips per market
             summ = self.runtime.get("last_summary")
             if summ and summ.get("analyzed_results"):
-                enhanced_tickets = select_best_tickets_enhanced(summ.get("analyzed_results"), only_today=True, max_tips_per_market=1)
+                enhanced_tickets = select_best_tickets_enhanced(summ.get("analyzed_results"), only_today=True, max_tips_per_market=2)
             else:
                 enhanced_tickets = {"x1x2": [], "btts": [], "overunder": []}
             
-            # Use unified formatting function
-            msg = self.format_ticket_message(enhanced_tickets)
+            def fmt_enhanced(entries, title):
+                if not entries: 
+                    return f"🚫 {title}: Nincs ajánlás"
+                
+                results = []
+                for i, entry in enumerate(entries[:2]):  # Max 2 tips per market
+                    result = fmt(entry, title)
+                    if i > 0:  # Add separator for multiple tips
+                        result = "─" * 25 + "\n" + result
+                    results.append(result)
+                return "\n".join(results)
+            
+            msg_parts = [
+                fmt_enhanced(enhanced_tickets.get("x1x2", []), "1X2"),
+                fmt_enhanced(enhanced_tickets.get("btts", []), "BTTS"), 
+                fmt_enhanced(enhanced_tickets.get("overunder", []), "O/U 2.5")
+            ]
+            
+            msg = "\n\n".join([part for part in msg_parts if "Nincs ajánlás" not in part])
+            if not msg:
+                msg = "🚫 Nincs tipp ma"
+            
             await self.send(msg, chat_id)
         elif cmd == "/refresh_tickets":
             tickets = build_offline_tickets(DATA_ROOT)
@@ -3973,7 +3912,7 @@ class TelegramBot:
                     fixture_ids=fids
                 elif args[0].isdigit():
                     days_override=int(args[0])
-            await self.send(f"Futás indult (fetch+analyze) TOP_MODE={TOP_MODE} USE_TIPPMIX={USE_TIPPMIX}...", chat_id)
+            await self.send(f"Futás indult (fetch+analyze) USE_TIPPMIX={USE_TIPPMIX}...", chat_id)
             try:
                 summary = await run_pipeline(
                     fetch=True,
@@ -3985,35 +3924,9 @@ class TelegramBot:
                     days_ahead_override=days_override
                 )
                 self.runtime["last_summary"] = summary
-                
-                # Send pipeline status summary first
                 await self.send(
                     f"Kész: fetched={len(summary['fetched'])} analyzed={summary['analyzed_count']} "
-                    f"picks={summary['picks_count']} TOP_MODE={TOP_MODE}", chat_id)
-                
-                # Automatically generate and send daily ticket recommendations
-                if summary.get("analyzed_results"):
-                    enhanced_tickets = select_best_tickets_enhanced(
-                        summary.get("analyzed_results"), 
-                        only_today=True, 
-                        max_tips_per_market=1  # Use max 1 tip per market for best value
-                    )
-                    
-                    # Check if we have any tickets to send
-                    has_tickets = any(enhanced_tickets.get(market, []) for market in ["x1x2", "btts", "overunder"])
-                    
-                    if has_tickets:
-                        # Send a header message for the daily recommendations
-                        await self.send("📊 NAPI SZELVÉNY AJÁNLÁSOK (Legjobb value/edge tippek)", chat_id)
-                        
-                        # Send the formatted ticket recommendations
-                        ticket_msg = self.format_ticket_message(enhanced_tickets)
-                        await self.send(ticket_msg, chat_id)
-                    else:
-                        await self.send("📭 Nincs napi szelvény ajánlás - nem található megfelelő value tipp", chat_id)
-                else:
-                    await self.send("⚠️ Nincs elemzési eredmény - szelvény nem generálható", chat_id)
-                    
+                    f"picks={summary['picks_count']}", chat_id)
             except Exception as e:
                 logger.exception("Run hiba (telegram)")
                 await self.send(f"Hiba: {e}", chat_id)
@@ -4054,7 +3967,7 @@ def parse_args():
 # =========================================================
 def main():
     import sys
-    logger.info(">>> MAIN START | USE_TIPPMIX=%s | TOP_MODE=%s | argv=%s", USE_TIPPMIX, TOP_MODE, sys.argv)
+    logger.info(">>> MAIN START | USE_TIPPMIX=%s | argv=%s", USE_TIPPMIX, sys.argv)
     args=parse_args()
 
     if args.reload_leagues:
@@ -4150,7 +4063,7 @@ def main():
         logger.info("Megszakítva felhasználó által.")
 
 
-# ====== VÉGPONT =======
+# ====== VÉGPONT =======/
 if __name__ == "__main__":
     try:
         main()
