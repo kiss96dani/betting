@@ -4063,7 +4063,7 @@ def main():
         logger.info("Megszakítva felhasználó által.")
 
 
-# ====== VÉGPONT =======
+# ====== VÉGPONT =======/
 if __name__ == "__main__":
     try:
         main()
