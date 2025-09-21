@@ -1,0 +1,23 @@
+# Temporary files
+/tmp/
+*.tmp
+*.log
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Data files
+out_fixture_*
+picks_*.json
+results_*.json
+raw/
+data/
+
+# IDE files
+.vscode/
+.idea/
+
+# Environment files
+.env__pycache__/

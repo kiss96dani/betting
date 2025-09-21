@@ -1,4 +1,49 @@
-# Tournament.json-based TOP League Filtering - Implementation Guide
+# Tournament.json-based TOP League Filtering - REMOVED ❌
+
+**⚠️ FONTOS: Ez a dokumentáció elavult! A tournaments.json függőséget eltávolítottuk a rendszerből.**
+
+## Új Implementáció 🆕
+
+A rendszer most már **kizárólag TippmixPro weboldal scraping-re** támaszkodik a ligák és mérkőzések adataihoz:
+
+### 1. TOP Liga Meghatározás
+- **Hardcoded lista**: `load_top_leagues_from_tippmix()` függvény
+- **55 TOP liga név** különböző variációkban (angol, magyar, rövid nevek)
+- **Nincs szükség external fájlra**
+
+### 2. Workflow Változások
+- **TippmixPro kötelező**: `USE_TIPPMIX=0` esetén a rendszer nem dolgoz fel mérkőzéseket
+- **API-Football csak TippmixPro párosított mérkőzésekre**: Statisztikai adatok csak a scraping során talált mérkőzésekhez
+- **Komplett automatizmus**: `/run` parancs teljes mértékben webscraping-alapú
+
+### 3. Hardcoded TOP Ligák
+```python
+# Premier League variációk
+"Premier League", "English Premier League", "Angol Premier League", "EPL"
+
+# La Liga variációk  
+"La Liga", "Spanish La Liga", "Spanyol La Liga", "Primera División"
+
+# Serie A variációk
+"Serie A", "Italian Serie A", "Olasz Serie A"
+
+# Bundesliga variációk
+"Bundesliga", "German Bundesliga", "Német Bundesliga"
+
+# Champions League variációk
+"Champions League", "UEFA Champions League", "UEFA Bajnokok Ligája", "UCL", "BL"
+
+# További nagy ligák...
+```
+
+### 4. Fontos Figyelmeztetések
+- **tournaments.json már nem használt** - a fájl lehet a repositoryban, de a kód nem használja
+- **TippmixPro integráció kötelező** - USE_TIPPMIX=0 esetén nincs feldolgozás
+- **Teljes automatizmus** - minden adat a TippmixPro weboldalról jön
+
+---
+
+## Eredeti Dokumentáció (Elavult) 📜
 
 ## Overview
 
