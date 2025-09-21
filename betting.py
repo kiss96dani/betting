@@ -513,6 +513,7 @@ class TeamComputedRating:
 class FixtureContext:
     fixture_id: int
     league_id: int
+    league_name: str
     season: int
     home_team_id: int
     away_team_id: int
@@ -527,7 +528,73 @@ class FixtureContext:
     fair_odds: dict
 
 # =========================================================
-# LeagueTierManager (változatlan)
+# TOP Liga Management (tournaments.json alapú)
+# =========================================================
+def load_top_leagues_from_tournaments() -> Dict[str, List[str]]:
+    """
+    Betölti a TOP ligákat a tournaments.json fájlból az 'is_top_level' mező alapján.
+    Visszaadja az összes név variációt (name, template_name, translated_name, short_translated_name).
+    """
+    tournaments_path = Path("tournaments.json")
+    top_league_names = set()
+    
+    if not tournaments_path.exists():
+        logger.warning("tournaments.json hiányzik – TOP liga azonosítás korlátozott.")
+        return {"names": [], "count": 0}
+    
+    try:
+        tdata = json.loads(tournaments_path.read_text(encoding="utf-8"))
+        if isinstance(tdata, list):
+            tournaments = tdata
+        else:
+            tournaments = tdata.get("tournaments", [])
+        
+        for tournament in tournaments:
+            if tournament.get("is_top_level", False):
+                # Összes név variáció hozzáadása
+                name_fields = ["name", "template_name", "translated_name", "short_translated_name"]
+                for field in name_fields:
+                    name = tournament.get(field)
+                    if name and isinstance(name, str) and name.strip():
+                        top_league_names.add(name.strip())
+        
+        result = {
+            "names": sorted(list(top_league_names)),
+            "count": len(top_league_names)
+        }
+        
+        logger.info("TOP ligák betöltve tournaments.json-ból: %d név variáció azonosítva", len(top_league_names))
+        for name in sorted(top_league_names):
+            logger.debug("TOP liga név: %s", name)
+            
+        return result
+        
+    except Exception as e:
+        logger.exception("tournaments.json feldolgozási hiba: %s", e)
+        return {"names": [], "count": 0}
+
+def is_top_league_by_name(league_name: str, top_league_names: List[str]) -> bool:
+    """
+    Ellenőrzi, hogy a liga neve megegyezik-e valamelyik TOP liga névvel (kis-nagybetű függetlenül).
+    """
+    if not league_name or not top_league_names:
+        return False
+    
+    league_name_lower = league_name.lower().strip()
+    
+    for top_name in top_league_names:
+        if top_name.lower().strip() == league_name_lower:
+            return True
+        # Részleges egyezés is elfogadható (pl. "Champions League" vs "UEFA Champions League")
+        if len(top_name) > 5 and top_name.lower() in league_name_lower:
+            return True
+        if len(league_name) > 5 and league_name_lower in top_name.lower():
+            return True
+    
+    return False
+
+# =========================================================
+# LeagueTierManager (tournaments.json-nal kiterjesztve)
 # =========================================================
 class LeagueTierManager:
     DEFAULT_TIER_CFG = {
@@ -553,8 +620,11 @@ class LeagueTierManager:
         self.tier_cfg={}
         self.classified={}
         self._top_ids_set=set()
+        # ÚJ: tournaments.json alapú TOP liga nevek
+        self.top_league_data = {"names": [], "count": 0}
         self._load_or_init_config()
         self._load_or_empty_classified()
+        self._load_top_leagues_from_tournaments()
         self._compute_top_ids()
     def _load_or_init_config(self):
         if self.tier_config_path.exists():
@@ -591,15 +661,61 @@ class LeagueTierManager:
     def _save_classified(self):
         self.classify_cache.parent.mkdir(parents=True, exist_ok=True)
         self.classify_cache.write_text(json.dumps(self.classified, indent=2), encoding="utf-8")
+    def _load_top_leagues_from_tournaments(self):
+        """Betölti a TOP ligákat a tournaments.json fájlból."""
+        self.top_league_data = load_top_leagues_from_tournaments()
+        
     def _compute_top_ids(self):
+        # Megtartjuk a régi tier-alapú logikát fallback-ként
         tiers=self.tier_cfg.get("tiers",{})
         top=set()
         for grp in ("TIER1","TIER1B","CUPS_ELITE","NT_MAJOR"):
             for lid in tiers.get(grp, []):
                 top.add(lid)
         self._top_ids_set=top
+        
     def is_top(self, league_id: int)->bool:
+        """
+        Meghatározza, hogy egy liga TOP-e.
+        Elsősorban tournaments.json név alapú, másodsorban ID alapú tier logika.
+        """
+        # Először próbálkozás név alapon
+        league_name = self.get_league_name(league_id)
+        if league_name and self.top_league_data["names"]:
+            is_top_by_name = is_top_league_by_name(league_name, self.top_league_data["names"])
+            if is_top_by_name:
+                return True
+        
+        # Fallback: régi ID-alapú logika
         return league_id in self._top_ids_set
+    
+    def get_league_name(self, league_id: int) -> str:
+        """Lekéri a liga nevét az ID alapján a classified adatokból."""
+        meta = self.classified.get(str(league_id))
+        if meta:
+            return meta.get("name", "")
+        return ""
+    
+    def is_top_with_reason(self, league_id: int, league_name: str = None) -> Tuple[bool, str]:
+        """
+        Meghatározza, hogy egy liga TOP-e, és megindokolja a döntést.
+        Visszaadja: (is_top: bool, reason: str)
+        """
+        if not league_name:
+            league_name = self.get_league_name(league_id)
+        
+        # Először név alapú ellenőrzés
+        if league_name and self.top_league_data["names"]:
+            is_top_by_name = is_top_league_by_name(league_name, self.top_league_data["names"])
+            if is_top_by_name:
+                return True, f"TOP liga (név alapján): {league_name}"
+        
+        # Fallback: ID-alapú tier logika
+        if league_id in self._top_ids_set:
+            tier = self.tier_of(league_id)
+            return True, f"TOP liga (tier alapján): {league_name} (tier: {tier})"
+        
+        return False, f"Nem TOP liga: {league_name or f'ID={league_id}'}"
     def tier_of(self, league_id: int)->str:
         for k,ids in self.tier_cfg.get("tiers",{}).items():
             if league_id in ids: return k
@@ -971,9 +1087,70 @@ def build_rationale(market: str,
                     notes: str = "",
                     margin_adj_diff: float | None = None,
                     raw_edge: float | None = None,
-                    z_edge: float | None = None) -> str:
-    diff=model_prob-market_prob
-    parts=[
+                    z_edge: float | None = None,
+                    league_id: int = None,
+                    league_name: str = None) -> str:
+    """
+    Részletes magyar nyelvű indoklás generálása minden tipphez.
+    """
+    diff = model_prob - market_prob
+    
+    # Magyar piac név fordítás
+    market_hu = {
+        "1X2": "Végeredmény",
+        "BTTS": "Mindkét csapat gólokat szerez",
+        "O/U 2.5": "Gólok száma (2.5 felett/alatt)"
+    }.get(market, market)
+    
+    # Szelekció magyar fordítása
+    selection_hu = {
+        "HOME": "Hazai győzelem",
+        "AWAY": "Vendég győzelem", 
+        "DRAW": "Döntetlen",
+        "YES": "Igen",
+        "NO": "Nem",
+        "OVER": "Felett",
+        "UNDER": "Alatt"
+    }.get(selection.upper(), selection)
+    
+    # Liga információ és TOP státusz
+    top_status = ""
+    if league_id and LEAGUE_MANAGER:
+        is_top, reason = LEAGUE_MANAGER.is_top_with_reason(league_id, league_name)
+        if is_top:
+            top_status = f" 🌟 {reason}"
+        else:
+            top_status = f" ⚪ {reason}"
+    
+    # Statisztikai magyarázat
+    confidence_level = "Alacsony"
+    if abs(diff) >= 0.15:
+        confidence_level = "Magas"
+    elif abs(diff) >= 0.08:
+        confidence_level = "Közepes"
+    
+    # Edge kategorizálás
+    edge_desc = "Gyenge"
+    if edge_val >= 0.15:
+        edge_desc = "Kiváló"
+    elif edge_val >= 0.08:
+        edge_desc = "Jó"
+    elif edge_val >= 0.04:
+        edge_desc = "Elfogadható"
+    
+    # Magyar nyelvű fő indoklás
+    explanation = f"""
+🎯 TIPP: {selection_hu} ({market_hu})
+📊 Elemzés: A modellünk {model_prob:.1%} valószínűséget ad erre az eredményre, míg a piac {market_prob:.1%}-ot ár be. 
+📈 Értékítélet: {edge_desc} value bet ({edge_val:.1%} edge), bizalmi szint: {confidence_level}
+⚽ Liga státusz:{top_status}
+🔢 Gólvárakozás: Hazai {lambda_home:.2f}, Vendég {lambda_away:.2f}
+💪 Erőviszony: {'Hazai előny' if rating_diff > 0.1 else 'Vendég előny' if rating_diff < -0.1 else 'Kiegyenlített'} ({rating_diff:+.2f})
+🧠 Modell: {'Ensemble' if ensemble_used else 'Alap'} algoritmus
+""".strip()
+    
+    # Technikai részletek (eredeti formátumban)
+    tech_parts = [
         f"Piac={market}",
         f"Pick={selection}",
         f"Model={model_prob:.4f}",
@@ -982,25 +1159,31 @@ def build_rationale(market: str,
         f"Odds={odds:.2f}",
         f"Edge={edge_val*100:.1f}%"
     ]
+    
     if raw_edge is not None:
-        parts.append(f"RawEdge={raw_edge:+.4f}")
+        tech_parts.append(f"RawEdge={raw_edge:+.4f}")
     if margin_adj_diff is not None:
-        parts.append(f"AdjDiff={margin_adj_diff:+.4f}")
+        tech_parts.append(f"AdjDiff={margin_adj_diff:+.4f}")
     if z_edge is not None:
-        parts.append(f"Z={z_edge:+.2f}")
-    parts.extend([
+        tech_parts.append(f"Z={z_edge:+.2f}")
+    
+    tech_parts.extend([
         f"λH={lambda_home:.2f}",
         f"λA={lambda_away:.2f}",
         f"RatingDiff={rating_diff:+.3f}",
         f"Ens={'Y' if ensemble_used else 'N'}"
     ])
+    
     if strict_flag is not None:
-        parts.append("Qual=" + ("STRICT" if strict_flag else "FALLBACK"))
+        tech_parts.append("Qual=" + ("STRICT" if strict_flag else "FALLBACK"))
     if diff_limit is not None:
-        parts.append(f"DiffTol={diff_limit:.2f}")
+        tech_parts.append(f"DiffTol={diff_limit:.2f}")
     if notes:
-        parts.append("Notes="+notes)
-    return " | ".join(parts)
+        tech_parts.append("Notes=" + notes)
+    
+    technical_details = " | ".join(tech_parts)
+    
+    return f"{explanation}\n\n📋 Technikai adatok: {technical_details}"
 
 # =========================================================
 # Állapot mentés / betöltés
@@ -1229,29 +1412,25 @@ async def fetch_leagues_from_odds_api() -> Dict[str, dict]:
 async def fetch_upcoming_fixtures(client: APIFootballClient, days_ahead: int)->list[dict]:
     fixtures=[]
     today=date.today()
+    total_fixtures_found = 0
+    
     for delta in range(days_ahead+1):
         d=today + timedelta(days=delta)
         js=await client.get("/fixtures", {"date": d.isoformat()})
         resp=js.get("response") or []
         for fx in resp:
+            total_fixtures_found += 1
             league_id=fx.get("league",{}).get("id")
+            
             if league_id:
-                if LEAGUE_WHITELIST and league_id not in LEAGUE_WHITELIST: continue
-                if league_id in LEAGUE_BLACKLIST: continue
-                
-                # Új tier-alapú szűrés: csak TIER1 és TIER1B ligák
-                if ENABLE_TIER_FILTERING:
-                    tier = LEAGUE_MANAGER.tier_of(league_id)
-                    if tier not in ["TIER1", "TIER1B"]:
-                        continue
-                
-                if TOP_MODE=="top_only":
-                    if not LEAGUE_MANAGER.is_top(league_id): continue
-                elif TOP_MODE=="hybrid":
-                    if LEAGUE_MANAGER.tier_of(league_id)=="EXCLUDE": continue
-                else:
-                    if LEAGUE_MANAGER.tier_of(league_id)=="EXCLUDE": continue
-            fixtures.append(fx)
+                # No filtering - include all fixtures
+                fixtures.append(fx)
+    
+    # Basic statistics
+    logger.info("API-Football fixture statistics:")
+    logger.info("  Total fixtures found: %d", total_fixtures_found)
+    logger.info("  Fixtures included: %d", len(fixtures))
+    
     uniq={}
     for f in fixtures:
         fid=f.get("fixture",{}).get("id")
@@ -1261,30 +1440,116 @@ async def fetch_upcoming_fixtures(client: APIFootballClient, days_ahead: int)->l
 # =========================================================
 # Tippmix MATCH gyűjtés
 # =========================================================
+async def tippmix_fetch_all_leagues_robust() -> list[dict]:
+    """
+    Robustly fetch all available leagues from TippmixPro, 
+    including special championships like World Cup qualifiers
+    """
+    all_tournaments = []
+    
+    async with TippmixProWampClient(verbose=False) as cli:
+        try:
+            # Fetch initial dump of available tournaments/venues
+            topics_to_check = [
+                "sport.1",  # Football
+                "sport.1.venue",  # Football venues
+                "tournament",  # Tournament data
+            ]
+            
+            for topic in topics_to_check:
+                try:
+                    dump_data = await cli.initial_dump_topic(topic)
+                    if dump_data:
+                        all_tournaments.extend(dump_data)
+                        logger.info(f"Fetched {len(dump_data)} items from topic: {topic}")
+                except Exception as e:
+                    logger.warning(f"Failed to fetch topic {topic}: {e}")
+                    continue
+                
+                await asyncio.sleep(0.1)  # Rate limiting
+        
+        except Exception as e:
+            logger.error(f"Error in robust league fetching: {e}")
+    
+    # Process and deduplicate tournaments
+    unique_tournaments = {}
+    special_keywords = [
+        "világbajnokság", "world cup", "vb", "wc",
+        "selejtező", "qualifier", "qualifying",
+        "európa bajnokság", "european championship", "euro",
+        "nemzetek ligája", "nations league",
+        "copa", "continental", "confederations"
+    ]
+    
+    for item in all_tournaments:
+        if item.get("_type") in ("TOURNAMENT", "VENUE"):
+            tid = item.get("id")
+            name = str(item.get("name", "")).lower()
+            
+            # Check if it's a special championship
+            is_special = any(keyword in name for keyword in special_keywords)
+            
+            if tid and (is_special or "league" in name or "liga" in name or "championship" in name):
+                unique_tournaments[tid] = {
+                    "id": tid,
+                    "name": item.get("name"),
+                    "type": item.get("_type"),
+                    "is_special": is_special,
+                    "venue_id": item.get("venue_id") or item.get("id")
+                }
+    
+    logger.info(f"Discovered {len(unique_tournaments)} unique tournaments, including {sum(1 for t in unique_tournaments.values() if t['is_special'])} special championships")
+    return list(unique_tournaments.values())
+
 async def tippmix_fetch_and_map(days_ahead: int) -> dict:
-    tournaments_path=Path("tournaments.json")
-    if not tournaments_path.exists():
-        logger.warning("tournaments.json hiányzik – Tippmix integráció korlátozott.")
-        return {}
+    # First try to get tournaments from enhanced robust fetching
     try:
-        tdata=json.loads(tournaments_path.read_text(encoding="utf-8"))
-    except Exception:
-        logger.exception("tournaments.json parse hiba.")
-        return {}
-    if isinstance(tdata,list): tours=tdata
-    else: tours=tdata.get("tournaments", [])
-    tours=tours[:300]
+        robust_tournaments = await tippmix_fetch_all_leagues_robust()
+        if robust_tournaments:
+            tours = robust_tournaments
+            logger.info(f"Using {len(tours)} tournaments from robust fetching")
+        else:
+            raise ValueError("No tournaments from robust fetching")
+    except Exception as e:
+        logger.warning(f"Robust fetching failed: {e}, falling back to tournaments.json")
+        # Fallback to tournaments.json
+        tournaments_path=Path("tournaments.json")
+        if not tournaments_path.exists():
+            logger.warning("tournaments.json hiányzik – Tippmix integráció korlátozott.")
+            return {}
+        try:
+            tdata=json.loads(tournaments_path.read_text(encoding="utf-8"))
+        except Exception:
+            logger.exception("tournaments.json parse hiba.")
+            return {}
+        if isinstance(tdata,list): tours=tdata
+        else: tours=tdata.get("tournaments", [])
+    
+    # Limit to prevent excessive API calls
+    tours=tours[:500]  # Increased from 300 to handle more leagues
     out=[]
+    
     async with TippmixProWampClient(verbose=False) as cli:
         for t in tours:
-            tid=str(t.get("id"))
-            venue=str(t.get("venue_id") or "")
-            if not venue: continue
-            recs=await cli.get_matches_for_venue_tournament(venue, tid)
-            for r in recs:
-                if r.get("_type")=="MATCH":
-                    out.append(r)
-            await asyncio.sleep(0.05)
+            try:
+                tid=str(t.get("id"))
+                venue=str(t.get("venue_id") or t.get("id") or "")
+                if not venue: continue
+                recs=await cli.get_matches_for_venue_tournament(venue, tid)
+                for r in recs:
+                    if r.get("_type")=="MATCH":
+                        # Add tournament info to match for better tracking
+                        r["tournament_info"] = {
+                            "name": t.get("name"),
+                            "is_special": t.get("is_special", False)
+                        }
+                        out.append(r)
+                await asyncio.sleep(0.05)
+            except Exception as e:
+                logger.warning(f"Failed to fetch matches for tournament {t.get('name', tid)}: {e}")
+                continue
+    
+    logger.info(f"Fetched {len(out)} matches from {len(tours)} tournaments")
     return {str(m.get("id")):m for m in out}
 
 # =========================================================
@@ -1395,6 +1660,42 @@ def z_score_diff(p_model: float, p_market: float)->float:
     var = p_market*(1-p_market)
     if var <= 0: return 0.0
     return (p_model - p_market)/math.sqrt(var)
+
+def format_local_time(iso_utc: str) -> str:
+    """Convert UTC ISO string to local time string"""
+    try:
+        dt_utc = datetime.fromisoformat(iso_utc.replace("Z", "+00:00"))
+        tz = ZoneInfo(LOCAL_TZ)
+        return dt_utc.astimezone(tz).strftime("%Y-%m-%d %H:%M")
+    except:
+        return iso_utc
+
+def calculate_market_strength(odds: dict, market_type: str) -> float:
+    """
+    Calculate market strength based on overround and betting volume proxy
+    Returns a percentage indicating market efficiency/strength
+    """
+    try:
+        if market_type == "1X2":
+            if not all(k in odds for k in ("home", "draw", "away")):
+                return 0.0
+            overround = 1/float(odds["home"]) + 1/float(odds["draw"]) + 1/float(odds["away"])
+            # Lower overround = stronger market (more efficient)
+            # Typical range: 1.02-1.15, convert to 0-100% strength
+            strength = max(0, min(100, (1.15 - overround) / 0.13 * 100))
+            return strength
+        elif market_type in ("BTTS", "O/U"):
+            # For 2-way markets
+            if len(odds) != 2:
+                return 0.0
+            o1, o2 = list(odds.values())
+            overround = 1/float(o1) + 1/float(o2)
+            # Typical range: 1.02-1.10 for 2-way markets
+            strength = max(0, min(100, (1.10 - overround) / 0.08 * 100))
+            return strength
+    except Exception:
+        return 0.0
+    return 0.0
 
 def relative_value(raw_edge: float, odds: float)->float:
     if odds<=0: return 0.0
@@ -1677,6 +1978,7 @@ def build_fixture_context(root: Path, fixture_id: int):
     ctx=FixtureContext(
         fixture_id=fixture_id,
         league_id=league_id,
+        league_name=league.get("name", ""),
         season=season,
         home_team_id=home_id,
         away_team_id=away_id,
@@ -1800,6 +2102,7 @@ def analyze_fixture(root: Path, fixture_id: int, enhanced_tools: dict|None=None)
         "fixture_id": ctx.fixture_id,
         "kickoff_utc": ctx.kickoff_utc.isoformat(),
         "league_id": ctx.league_id,
+        "league_name": ctx.league_name,
         "league_tier": tier,
         "season": ctx.season,
         "teams": {"home_id": ctx.home_team_id, "away_id": ctx.away_team_id},
@@ -1848,13 +2151,8 @@ def allocate_stakes(analysis_results: list[dict])->list[dict]:
             if edge_val < MIN_EDGE_THRESHOLD:
                 return False
                 
-            if TOP_MODE=="all": return edge_val>0
-            if TOP_MODE=="top_only":
-                return LEAGUE_MANAGER.is_top(league_id) and edge_val>=PUBLISH_MIN_EDGE_TOP
-            if TOP_MODE=="hybrid":
-                if LEAGUE_MANAGER.is_top(league_id): return edge_val>=PUBLISH_MIN_EDGE_TOP
-                return edge_val>=PUBLISH_MIN_EDGE_OTHER
-            return edge_val>0
+            # No league-based filtering - use simple edge threshold
+            return edge_val > 0
         edge_d=r.get("edge",{})
         kelly_d=r.get("kelly",{})
         best_sel=None; best_edge=0.0
@@ -1920,7 +2218,9 @@ def allocate_stakes(analysis_results: list[dict])->list[dict]:
             notes=f"Pick stake kelly={k_frac:.4f} diff={diff:+.4f}",
             margin_adj_diff=margin_adj_diff,
             raw_edge=raw_edge_val,
-            z_edge=z_edge
+            z_edge=z_edge,
+            league_id=league_id,
+            league_name=r.get("league_name")
         )
         picks.append({
             "fixture_id": r["fixture_id"],
@@ -1974,6 +2274,208 @@ def to_local_time(iso_utc: str)->str:
     except:
         return iso_utc
 
+def select_best_tickets_enhanced(analyzed_results: list[dict], only_today: bool=True, max_tips_per_market: int=2) -> dict:
+    """
+    Enhanced ticket selection that returns multiple top tips per market
+    """
+    tz=ZoneInfo(LOCAL_TZ)
+    today_local=datetime.now(tz=tz).date()
+    
+    def same_local_day(iso_utc: str)->bool:
+        if not only_today: return True
+        try:
+            dt_utc=datetime.fromisoformat(iso_utc.replace("Z","+00:00"))
+            return dt_utc.astimezone(tz).date()==today_local
+        except: return False
+        
+    def implied_probs_1x2(odds: dict)->dict|None:
+        try:
+            inv={k:1/float(v) for k,v in odds.items()}
+            s=sum(inv.values())
+            if s<=0: return None
+            return {k:inv[k]/s for k in ("home","draw","away")}
+        except: return None
+        
+    def allow_ticket_for_public(r: dict, market: str)->bool:
+        # No league filtering - allow all matches
+        return True
+
+    # Collect all candidates for each market
+    candidates_1x2 = []
+    candidates_btts = []
+    candidates_ou = []
+
+    # Process 1X2 market
+    for r in analyzed_results:
+        if not allow_ticket_for_public(r,"1X2"): continue
+        ko=r.get("kickoff_utc")
+        if not ko: continue
+        if only_today and not same_local_day(ko): continue
+        odds=r.get("odds") or {}; edges=r.get("edge") or {}; probs=r.get("model_probs") or {}
+        if not odds or not edges or not probs: continue
+        ip=implied_probs_1x2(odds)
+        if not ip: continue
+        
+        # Calculate market strength
+        market_strength = calculate_market_strength(odds, "1X2")
+        
+        for sel in ("home","draw","away"):
+            e=edges.get(sel); p=probs.get(sel); pi=ip.get(sel); o=odds.get(sel)
+            if None in (e,p,pi,o): continue
+            try: o=float(o)
+            except: continue
+            if e<=0 or e>EDGE_CAP_1X2: continue
+            if o>TICKET_MAX_ODDS_1X2: continue
+            if abs(p-pi)>TICKET_DIFF_TOL_1X2: continue
+            
+            # Enhanced value calculation considering market strength
+            value_score = e * (1 + market_strength / 100 * 0.1)  # 10% bonus for strong markets
+            
+            candidates_1x2.append({
+                "fixture_id": r["fixture_id"],
+                "league_id": r.get("league_id"),
+                "league_name": r.get("league_name"),
+                "league_tier": r.get("league_tier"),
+                "home_name": r.get("home_name"),
+                "away_name": r.get("away_name"),
+                "market": "1X2",
+                "selection": sel.upper(),
+                "edge": e,
+                "value_score": value_score,
+                "odds": o,
+                "model_prob": p,
+                "market_prob": pi,
+                "market_strength": market_strength,
+                "kickoff_utc": r["kickoff_utc"],
+                "kickoff_local": format_local_time(r["kickoff_utc"])
+            })
+
+    # Process BTTS market
+    for r in analyzed_results:
+        if not allow_ticket_for_public(r,"BTTS"): continue
+        ko=r.get("kickoff_utc")
+        if not ko: continue
+        if only_today and not same_local_day(ko): continue
+        me=r.get("market_edge") or {}; mo=r.get("market_odds") or {}; mp=r.get("market_probs") or {}
+        if not mo or not mp: continue
+        
+        y_odds=mo.get("yes"); n_odds=mo.get("no")
+        if y_odds is None or n_odds is None: continue
+        try: y_odds=float(y_odds); n_odds=float(n_odds)
+        except: continue
+        
+        # Calculate market strength for BTTS
+        btts_odds = {"yes": y_odds, "no": n_odds}
+        market_strength = calculate_market_strength(btts_odds, "BTTS")
+        
+        try:
+            ia=1/y_odds; ib=1/n_odds; s=ia+ib
+            pair=(ia/s,ib/s) if s>0 else None
+        except:
+            pair=None
+        if not pair: continue
+        p_yes_mkt,p_no_mkt=pair
+        
+        for sel_raw in ("yes","no"):
+            e=me.get(sel_raw); p=mp.get(sel_raw)
+            if e is None or p is None: continue
+            if e<=0 or e>EDGE_CAP_BTTs_OU: continue
+            o=y_odds if sel_raw=="yes" else n_odds
+            p_mkt=p_yes_mkt if sel_raw=="yes" else p_no_mkt
+            if o>TICKET_MAX_ODDS_2WAY: continue
+            if abs(p-p_mkt)>TICKET_DIFF_TOL_2WAY: continue
+            
+            # Enhanced value calculation
+            value_score = e * (1 + market_strength / 100 * 0.1)
+            
+            candidates_btts.append({
+                "fixture_id": r["fixture_id"],
+                "league_id": r.get("league_id"),
+                "league_name": r.get("league_name"),
+                "league_tier": r.get("league_tier"),
+                "home_name": r.get("home_name"),
+                "away_name": r.get("away_name"),
+                "market": "BTTS",
+                "selection": sel_raw.upper(),
+                "edge": e,
+                "value_score": value_score,
+                "odds": o,
+                "model_prob": p,
+                "market_prob": p_mkt,
+                "market_strength": market_strength,
+                "kickoff_utc": r["kickoff_utc"],
+                "kickoff_local": format_local_time(r["kickoff_utc"])
+            })
+
+    # Process O/U 2.5 market
+    for r in analyzed_results:
+        if not allow_ticket_for_public(r,"O/U 2.5"): continue
+        ko=r.get("kickoff_utc")
+        if not ko: continue
+        if only_today and not same_local_day(ko): continue
+        me=r.get("market_edge") or {}; mo=r.get("market_odds") or {}; mp=r.get("market_probs") or {}
+        if not mo or not mp: continue
+        
+        ov=mo.get("over25"); un=mo.get("under25")
+        if ov is None or un is None: continue
+        try: ov=float(ov); un=float(un)
+        except: continue
+        
+        # Calculate market strength for O/U
+        ou_odds = {"over": ov, "under": un}
+        market_strength = calculate_market_strength(ou_odds, "O/U")
+        
+        try:
+            ia=1/ov; ib=1/un; s=ia+ib
+            pair=(ia/s,ib/s) if s>0 else None
+        except:
+            pair=None
+        if not pair: continue
+        p_ov_mkt,p_un_mkt=pair
+        
+        for sel_raw in ("over25","under25"):
+            e=me.get(sel_raw); p=mp.get(sel_raw)
+            if e is None or p is None: continue
+            if e<=0 or e>EDGE_CAP_BTTs_OU: continue
+            o=ov if sel_raw=="over25" else un
+            p_mkt=p_ov_mkt if sel_raw=="over25" else p_un_mkt
+            if o>TICKET_MAX_ODDS_2WAY: continue
+            if abs(p-p_mkt)>TICKET_DIFF_TOL_2WAY: continue
+            
+            # Enhanced value calculation
+            value_score = e * (1 + market_strength / 100 * 0.1)
+            
+            label="OVER 2.5" if sel_raw=="over25" else "UNDER 2.5"
+            candidates_ou.append({
+                "fixture_id": r["fixture_id"],
+                "league_id": r.get("league_id"),
+                "league_name": r.get("league_name"),
+                "league_tier": r.get("league_tier"),
+                "home_name": r.get("home_name"),
+                "away_name": r.get("away_name"),
+                "market": "O/U 2.5",
+                "selection": label,
+                "edge": e,
+                "value_score": value_score,
+                "odds": o,
+                "model_prob": p,
+                "market_prob": p_mkt,
+                "market_strength": market_strength,
+                "kickoff_utc": r["kickoff_utc"],
+                "kickoff_local": format_local_time(r["kickoff_utc"])
+            })
+
+    # Sort and select top candidates for each market
+    candidates_1x2.sort(key=lambda x: x["value_score"], reverse=True)
+    candidates_btts.sort(key=lambda x: x["value_score"], reverse=True)
+    candidates_ou.sort(key=lambda x: x["value_score"], reverse=True)
+
+    return {
+        "x1x2": candidates_1x2[:max_tips_per_market] if candidates_1x2 else [],
+        "btts": candidates_btts[:max_tips_per_market] if candidates_btts else [],
+        "overunder": candidates_ou[:max_tips_per_market] if candidates_ou else []
+    }
+
 def select_best_tickets(analyzed_results: list[dict], only_today: bool=True) -> dict:
     tz=ZoneInfo(LOCAL_TZ)
     today_local=datetime.now(tz=tz).date()
@@ -1991,10 +2493,7 @@ def select_best_tickets(analyzed_results: list[dict], only_today: bool=True) -> 
             return {k:inv[k]/s for k in ("home","draw","away")}
         except: return None
     def allow_ticket_for_public(r: dict, market: str)->bool:
-        league_id=r.get("league_id")
-        if TOP_MODE=="all": return True
-        if TOP_MODE=="top_only": return LEAGUE_MANAGER.is_top(league_id)
-        if TOP_MODE=="hybrid": return LEAGUE_MANAGER.is_top(league_id)
+        # No league filtering - allow all matches
         return True
     best_1x2=None; best_edge_1x2=-1
     for r in analyzed_results:
@@ -2029,7 +2528,9 @@ def select_best_tickets(analyzed_results: list[dict], only_today: bool=True) -> 
                                           "enhanced_model" in r, "Ticket strict",
                                           margin_adj_diff=margin_adj,
                                           raw_edge=raw_edge,
-                                          z_edge=z_e)
+                                          z_edge=z_e,
+                                          league_id=r.get("league_id"),
+                                          league_name=r.get("league_name"))
                 best_edge_1x2=e
                 best_1x2={
                     "fixture_id": r["fixture_id"],
@@ -2098,7 +2599,9 @@ def select_best_tickets(analyzed_results: list[dict], only_today: bool=True) -> 
                         notes="Ticket strict",
                         margin_adj_diff=margin_adj,
                         raw_edge=raw_edge_val,
-                        z_edge=z_e
+                        z_edge=z_e,
+                        league_id=r.get("league_id"),
+                        league_name=r.get("league_name")
                     )
                     best_edge_btts=e
                     best_btts={
@@ -2131,7 +2634,9 @@ def select_best_tickets(analyzed_results: list[dict], only_today: bool=True) -> 
                         notes="Fallback jelölt",
                         margin_adj_diff=margin_adj,
                         raw_edge=raw_edge_val,
-                        z_edge=z_e
+                        z_edge=z_e,
+                        league_id=r.get("league_id"),
+                        league_name=r.get("league_name")
                     )
                     candidate_btts_fallback.append({
                         "fixture_id": r["fixture_id"],
@@ -2207,7 +2712,9 @@ def select_best_tickets(analyzed_results: list[dict], only_today: bool=True) -> 
                         notes="Ticket strict",
                         margin_adj_diff=margin_adj,
                         raw_edge=raw_edge_val,
-                        z_edge=z_e
+                        z_edge=z_e,
+                        league_id=r.get("league_id"),
+                        league_name=r.get("league_name")
                     )
                     best_edge_ou=e
                     best_ou={
@@ -2240,7 +2747,9 @@ def select_best_tickets(analyzed_results: list[dict], only_today: bool=True) -> 
                         notes="Fallback jelölt",
                         margin_adj_diff=margin_adj,
                         raw_edge=raw_edge_val,
-                        z_edge=z_e
+                        z_edge=z_e,
+                        league_id=r.get("league_id"),
+                        league_name=r.get("league_name")
                     )
                     candidate_ou_fallback.append({
                         "fixture_id": r["fixture_id"],
@@ -2320,7 +2829,7 @@ def save_ticket_full_analysis(tickets: dict, root: Path)->Optional[Path]:
     out={
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "local_tz": LOCAL_TZ,
-        "top_mode": TOP_MODE,
+        "tippmix_enabled": USE_TIPPMIX,
         "tickets": tickets,
         "fixtures": items
     }
@@ -2587,6 +3096,222 @@ def update_calibration_history_from_results(cal_path: Path, picks: List[dict]):
 # =========================================================
 # Daily riport (változatlan)
 # =========================================================
+def generate_comprehensive_stats(analyzed_results: list[dict], output_path: Path):
+    """
+    Generate comprehensive statistics file with detailed match data, odds, 
+    model-market percentages, value, confidence level, market strength, league classification
+    """
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    stats = {
+        "generated_at": datetime.utcnow().isoformat(),
+        "total_matches": len(analyzed_results),
+        "summary": {
+            "leagues_covered": len(set(r.get("league_id") for r in analyzed_results if r.get("league_id"))),
+            "top_leagues": 0,
+            "other_leagues": 0,
+            "markets_analyzed": ["1X2", "BTTS", "O/U 2.5"]
+        },
+        "detailed_matches": []
+    }
+    
+    for r in analyzed_results:
+        # Basic match info
+        match_data = {
+            "fixture_id": r.get("fixture_id"),
+            "league_id": r.get("league_id"),
+            "league_name": r.get("league_name"),
+            "league_tier": r.get("league_tier"),
+            "is_top_league": LEAGUE_MANAGER.is_top(r.get("league_id")) if r.get("league_id") else False,
+            "home_team": r.get("home_name"),
+            "away_team": r.get("away_name"),
+            "kickoff_utc": r.get("kickoff_utc"),
+            "kickoff_local": format_local_time(r.get("kickoff_utc", "")),
+            "markets": {}
+        }
+        
+        # Update league counts
+        if match_data["is_top_league"]:
+            stats["summary"]["top_leagues"] += 1
+        else:
+            stats["summary"]["other_leagues"] += 1
+        
+        # 1X2 Market Analysis
+        odds_1x2 = r.get("odds", {})
+        edges_1x2 = r.get("edge", {})
+        probs_1x2 = r.get("model_probs", {})
+        
+        if odds_1x2 and edges_1x2 and probs_1x2:
+            market_strength_1x2 = calculate_market_strength(odds_1x2, "1X2")
+            implied_probs = None
+            try:
+                inv = {k: 1/float(v) for k, v in odds_1x2.items() if k in ("home", "draw", "away")}
+                s = sum(inv.values())
+                if s > 0:
+                    implied_probs = {k: inv[k]/s for k in inv}
+            except:
+                pass
+            
+            match_data["markets"]["1X2"] = {
+                "market_strength": market_strength_1x2,
+                "overround": sum(1/float(odds_1x2.get(k, 1)) for k in ("home", "draw", "away") if k in odds_1x2),
+                "selections": {}
+            }
+            
+            for sel in ("home", "draw", "away"):
+                if sel in odds_1x2 and sel in edges_1x2 and sel in probs_1x2:
+                    edge_val = edges_1x2[sel]
+                    model_prob = probs_1x2[sel]
+                    market_prob = implied_probs.get(sel, 0) if implied_probs else 0
+                    odds_val = float(odds_1x2[sel])
+                    
+                    # Value calculation with market strength
+                    value_score = edge_val * (1 + market_strength_1x2 / 100 * 0.1)
+                    
+                    # Confidence level
+                    confidence = "Alacsony"
+                    if edge_val >= 0.15:
+                        confidence = "Magas"
+                    elif edge_val >= 0.08:
+                        confidence = "Közepes"
+                    
+                    match_data["markets"]["1X2"]["selections"][sel] = {
+                        "odds": odds_val,
+                        "model_probability": model_prob,
+                        "market_probability": market_prob,
+                        "edge": edge_val,
+                        "value_score": value_score,
+                        "confidence_level": confidence,
+                        "raw_value": model_prob * odds_val - 1,
+                        "probability_difference": model_prob - market_prob,
+                        "meets_publish_threshold": edge_val >= PUBLISH_MIN_EDGE_TOP if match_data["is_top_league"] else edge_val >= PUBLISH_MIN_EDGE_OTHER
+                    }
+        
+        # BTTS Market Analysis
+        market_odds_btts = r.get("market_odds", {})
+        market_edges_btts = r.get("market_edge", {})
+        market_probs_btts = r.get("market_probs", {})
+        
+        if market_odds_btts and market_edges_btts and market_probs_btts:
+            y_odds = market_odds_btts.get("yes")
+            n_odds = market_odds_btts.get("no")
+            
+            if y_odds is not None and n_odds is not None:
+                try:
+                    y_odds, n_odds = float(y_odds), float(n_odds)
+                    btts_odds = {"yes": y_odds, "no": n_odds}
+                    market_strength_btts = calculate_market_strength(btts_odds, "BTTS")
+                    
+                    # Implied probabilities
+                    ia, ib = 1/y_odds, 1/n_odds
+                    s = ia + ib
+                    implied_probs_btts = {"yes": ia/s, "no": ib/s} if s > 0 else {}
+                    
+                    match_data["markets"]["BTTS"] = {
+                        "market_strength": market_strength_btts,
+                        "overround": s,
+                        "selections": {}
+                    }
+                    
+                    for sel in ("yes", "no"):
+                        if sel in market_edges_btts and sel in market_probs_btts:
+                            edge_val = market_edges_btts[sel]
+                            model_prob = market_probs_btts[sel]
+                            market_prob = implied_probs_btts.get(sel, 0)
+                            odds_val = y_odds if sel == "yes" else n_odds
+                            
+                            value_score = edge_val * (1 + market_strength_btts / 100 * 0.1)
+                            
+                            confidence = "Alacsony"
+                            if edge_val >= 0.15:
+                                confidence = "Magas"
+                            elif edge_val >= 0.08:
+                                confidence = "Közepes"
+                            
+                            match_data["markets"]["BTTS"]["selections"][sel] = {
+                                "odds": odds_val,
+                                "model_probability": model_prob,
+                                "market_probability": market_prob,
+                                "edge": edge_val,
+                                "value_score": value_score,
+                                "confidence_level": confidence,
+                                "raw_value": model_prob * odds_val - 1,
+                                "probability_difference": model_prob - market_prob,
+                                "meets_publish_threshold": edge_val >= PUBLISH_MIN_EDGE_TOP if match_data["is_top_league"] else edge_val >= PUBLISH_MIN_EDGE_OTHER
+                            }
+                except:
+                    pass
+        
+        # O/U 2.5 Market Analysis
+        if market_odds_btts and market_edges_btts and market_probs_btts:
+            ov_odds = market_odds_btts.get("over25")
+            un_odds = market_odds_btts.get("under25")
+            
+            if ov_odds is not None and un_odds is not None:
+                try:
+                    ov_odds, un_odds = float(ov_odds), float(un_odds)
+                    ou_odds = {"over": ov_odds, "under": un_odds}
+                    market_strength_ou = calculate_market_strength(ou_odds, "O/U")
+                    
+                    # Implied probabilities
+                    ia, ib = 1/ov_odds, 1/un_odds
+                    s = ia + ib
+                    implied_probs_ou = {"over25": ia/s, "under25": ib/s} if s > 0 else {}
+                    
+                    match_data["markets"]["O/U 2.5"] = {
+                        "market_strength": market_strength_ou,
+                        "overround": s,
+                        "selections": {}
+                    }
+                    
+                    for sel_raw in ("over25", "under25"):
+                        if sel_raw in market_edges_btts and sel_raw in market_probs_btts:
+                            edge_val = market_edges_btts[sel_raw]
+                            model_prob = market_probs_btts[sel_raw]
+                            market_prob = implied_probs_ou.get(sel_raw, 0)
+                            odds_val = ov_odds if sel_raw == "over25" else un_odds
+                            
+                            value_score = edge_val * (1 + market_strength_ou / 100 * 0.1)
+                            
+                            confidence = "Alacsony"
+                            if edge_val >= 0.15:
+                                confidence = "Magas"
+                            elif edge_val >= 0.08:
+                                confidence = "Közepes"
+                            
+                            selection_name = "over" if sel_raw == "over25" else "under"
+                            
+                            match_data["markets"]["O/U 2.5"]["selections"][selection_name] = {
+                                "odds": odds_val,
+                                "model_probability": model_prob,
+                                "market_probability": market_prob,
+                                "edge": edge_val,
+                                "value_score": value_score,
+                                "confidence_level": confidence,
+                                "raw_value": model_prob * odds_val - 1,
+                                "probability_difference": model_prob - market_prob,
+                                "meets_publish_threshold": edge_val >= PUBLISH_MIN_EDGE_TOP if match_data["is_top_league"] else edge_val >= PUBLISH_MIN_EDGE_OTHER
+                            }
+                except:
+                    pass
+        
+        stats["detailed_matches"].append(match_data)
+    
+    # Sort matches by highest value scores across all markets
+    for match in stats["detailed_matches"]:
+        max_value = 0
+        for market_data in match["markets"].values():
+            for sel_data in market_data.get("selections", {}).values():
+                max_value = max(max_value, sel_data.get("value_score", 0))
+        match["max_value_score"] = max_value
+    
+    stats["detailed_matches"].sort(key=lambda x: x.get("max_value_score", 0), reverse=True)
+    
+    # Write to JSON file
+    safe_write_json(output_path, stats)
+    logger.info("Comprehensive statistics generated: %s", output_path)
+    return output_path
+
 def generate_daily_report(picks_file: Path, out_dir: Path):
     out_dir.mkdir(parents=True, exist_ok=True)
     try:
@@ -2686,58 +3411,78 @@ async def run_pipeline(fetch: bool, analyze: bool,
     if fetch:
         async with APIFootballClient(API_KEY, API_BASE) as client:
             if fixture_ids:
+                # Handle specific fixture IDs request
                 fixture_objs=[]
                 for fid in fixture_ids:
                     js=await client.get("/fixtures", {"id": fid})
                     resp=js.get("response") or []
                     if resp: fixture_objs.append(resp[0])
+                logger.info("Specific fixtures requested: %d", len(fixture_objs))
             else:
-                fixture_objs=await fetch_upcoming_fixtures(client, days_ahead)
-            logger.info("API-Football fixture jelöltek: %d (TOP_MODE=%s)", len(fixture_objs), TOP_MODE)
-            if USE_TIPPMIX:
-                logger.info("TippmixPro integráció – meccsek párosítása...")
-                tipp_matches=await tippmix_fetch_and_map(TIPPMIX_DAYS_AHEAD)
-                logger.info("TippmixPro MATCH rekordok: %d", len(tipp_matches))
-                tip_index=[]
-                for tm in tipp_matches.values():
-                    home=tm.get("homeParticipantName") or ""
-                    away=tm.get("awayParticipantName") or ""
-                    start_ms=tm.get("startTime")
-                    tip_index.append({
-                        "match_id": tm.get("id"),
-                        "home_n": normalize_team_name(home),
-                        "away_n": normalize_team_name(away),
-                        "start_ms": start_ms,
-                        "raw": tm
-                    })
-                matched=[]; mapping_api_to_tip={}
-                for fx in fixture_objs:
-                    fixture=fx.get("fixture",{}) or {}
-                    teams=fx.get("teams",{}) or {}
-                    fid=fixture.get("id"); ts=fixture.get("timestamp")
-                    if not (fid and ts and teams.get("home") and teams.get("away")): continue
-                    home_name=teams["home"].get("name","")
-                    away_name=teams["away"].get("name","")
-                    hn=normalize_team_name(home_name)
-                    an=normalize_team_name(away_name)
-                    ts_ms=ts*1000
-                    best=None; best_score=0
-                    for tm in tip_index:
-                        if tm["start_ms"] is None: continue
-                        if abs(tm["start_ms"] - ts_ms) > TIPPMIX_TIME_TOLERANCE_MIN*60*1000: continue
-                        sim_home=similarity(hn, tm["home_n"])
-                        sim_away=similarity(an, tm["away_n"])
-                        sim=(sim_home+sim_away)/2
-                        if sim>best_score:
-                            best_score=sim; best=tm
-                    if best and best_score>=TIPPMIX_SIMILARITY_THRESHOLD:
-                        mapping_api_to_tip[fid]=best["match_id"]
-                        matched.append(fx)
-                logger.info("Párosított fixturek: %d / %d (threshold=%.2f)", len(matched), len(fixture_objs), TIPPMIX_SIMILARITY_THRESHOLD)
-                fixture_objs=matched
-                tippmix_mapping=mapping_api_to_tip
-            else:
-                logger.info("TippmixPro integráció kikapcsolva (USE_TIPPMIX=0).")
+                # NEW WORKFLOW: Start with TippmixPro as primary source
+                logger.info("Starting TippmixPro-first workflow - getting all available matches...")
+                try:
+                    tipp_matches=await tippmix_fetch_and_map(TIPPMIX_DAYS_AHEAD)
+                    logger.info("TippmixPro MATCH rekordok: %d", len(tipp_matches))
+                except Exception as e:
+                    logger.warning("TippmixPro connection failed: %s", e)
+                    tipp_matches = {}
+                
+                if not tipp_matches:
+                    logger.warning("No TippmixPro matches found, falling back to API-Football...")
+                    fixture_objs=await fetch_upcoming_fixtures(client, days_ahead)
+                    logger.info("API-Football fallback fixtures: %d", len(fixture_objs))
+                else:
+                    # Get API-Football data for all days to enable matching
+                    logger.info("Fetching API-Football data for statistical analysis...")
+                    all_api_fixtures=await fetch_upcoming_fixtures(client, days_ahead)
+                    logger.info("API-Football fixtures available for matching: %d", len(all_api_fixtures))
+                    
+                    # Create API-Football index for matching
+                    api_index=[]
+                    for fx in all_api_fixtures:
+                        fixture=fx.get("fixture",{}) or {}
+                        teams=fx.get("teams",{}) or {}
+                        fid=fixture.get("id"); ts=fixture.get("timestamp")
+                        if not (fid and ts and teams.get("home") and teams.get("away")): continue
+                        home_name=teams["home"].get("name","")
+                        away_name=teams["away"].get("name","")
+                        api_index.append({
+                            "fixture_id": fid,
+                            "home_n": normalize_team_name(home_name),
+                            "away_n": normalize_team_name(away_name),
+                            "timestamp_ms": ts*1000,
+                            "fixture_obj": fx
+                        })
+                    
+                    # Match TippmixPro matches with API-Football data
+                    matched=[]; mapping_api_to_tip={}
+                    for tm in tipp_matches.values():
+                        home=tm.get("homeParticipantName") or ""
+                        away=tm.get("awayParticipantName") or ""
+                        start_ms=tm.get("startTime")
+                        if not start_ms: continue
+                        
+                        hn=normalize_team_name(home)
+                        an=normalize_team_name(away)
+                        
+                        best=None; best_score=0
+                        for api_match in api_index:
+                            if abs(api_match["timestamp_ms"] - start_ms) > TIPPMIX_TIME_TOLERANCE_MIN*60*1000: continue
+                            sim_home=similarity(hn, api_match["home_n"])
+                            sim_away=similarity(an, api_match["away_n"])
+                            sim=(sim_home+sim_away)/2
+                            if sim>best_score:
+                                best_score=sim; best=api_match
+                        
+                        if best and best_score>=TIPPMIX_SIMILARITY_THRESHOLD:
+                            mapping_api_to_tip[best["fixture_id"]]=tm.get("id")
+                            matched.append(best["fixture_obj"])
+                    
+                    logger.info("TippmixPro matches matched with API-Football: %d / %d (threshold=%.2f)", 
+                              len(matched), len(tipp_matches), TIPPMIX_SIMILARITY_THRESHOLD)
+                    fixture_objs=matched
+                    tippmix_mapping=mapping_api_to_tip
             filtered=[]
             for fx in fixture_objs:
                 status=fx.get("fixture",{}).get("status",{}).get("short")
@@ -2788,15 +3533,22 @@ async def run_pipeline(fetch: bool, analyze: bool,
         register_picks(picks)
         tickets=select_best_tickets(analyzed_res, only_today=TICKET_ONLY_TODAY)
         if tickets: save_ticket_full_analysis(tickets, DATA_ROOT)
+        
+        # Generate comprehensive statistics with all match details
+        if analyzed_res:
+            stats_path = DATA_ROOT / f"comprehensive_stats_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
+            generate_comprehensive_stats(analyzed_res, stats_path)
+            logger.info("Comprehensive statistics generated: %s", stats_path.name)
     RUNTIME_STATE["last_run"]=datetime.now(timezone.utc).isoformat()
     save_state()
     summary={
         "fetched": new_fetched,
         "analyzed_count": len(analyzed_res),
+        "analyzed_results": analyzed_res,  # Add analyzed results for enhanced telegram
         "picks_count": len(picks),
         "picks": picks,
         "tickets": tickets,
-        "top_mode": TOP_MODE,
+        "tippmix_enabled": USE_TIPPMIX,
         "use_tippmix": USE_TIPPMIX
     }
     picks_file=DATA_ROOT / f"picks_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
@@ -2908,24 +3660,39 @@ class TelegramBot:
                 "/cleanup\n"
                 "/refresh_tickets\n"
                 "/dailyreport\n"
-                "/mode <top_only|hybrid|all>\n"
+                "/mode (liga szűrés letiltva)\n"
                 "/tiers | /leagues <minta> | /reloadtiers\n"
                 "/updatecal | /retraincal | /exportbayes\n"
                 "/tippmixstats\n"
                 "/stop", chat_id)
         elif cmd == "/mode":
-            if args and args[0] in ("top_only","hybrid","all"):
-                global TOP_MODE
-                TOP_MODE = args[0]
-                await self.send(f"TOP_MODE beállítva: {TOP_MODE}", chat_id)
-            else:
-                await self.send(f"Jelenlegi TOP_MODE={TOP_MODE}. Használat: /mode top_only|hybrid|all", chat_id)
+            await self.send("Liga szűrés letiltva - minden elérhető TippmixPro meccs feldolgozásra kerül.", chat_id)
         elif cmd == "/tiers":
             counts = LEAGUE_MANAGER.summarize_tiers()
-            lines = [f"Tier statisztika (összes={sum(counts.values())}):"]
+            lines = [f"🏆 Liga Statisztika (összes: {sum(counts.values())})"]
+            lines.append("")
+            
+            # Tier alapú statisztika
+            lines.append("📊 Tier alapú besorolás:")
             for k in sorted(counts.keys()):
-                lines.append(f"- {k}: {counts[k]}")
-            lines.append(f"TOP_MODE={TOP_MODE}")
+                emoji = "🥇" if k == "TIER1" else "🥈" if k == "TIER1B" else "🏆" if "ELITE" in k else "⚽"
+                lines.append(f"  {emoji} {k}: {counts[k]} liga")
+            
+            lines.append("")
+            lines.append(f"🎯 Liga szűrés: KIKAPCSOLVA (minden meccs)")
+            
+            # TOP liga információk tournaments.json-ból
+            top_data = LEAGUE_MANAGER.top_league_data
+            lines.append(f"🌟 TOP ligák (tournaments.json): {top_data['count']} név")
+            
+            if top_data['names']:
+                lines.append("")
+                lines.append("🏅 Azonosított TOP liga nevek:")
+                for i, name in enumerate(top_data['names'][:10], 1):  # Max 10 név
+                    lines.append(f"  {i}. {name}")
+                if len(top_data['names']) > 10:
+                    lines.append(f"  ... és még {len(top_data['names'])-10} további")
+            
             await self.send("\n".join(lines), chat_id)
         elif cmd == "/leagues":
             if not args:
@@ -2978,7 +3745,7 @@ class TelegramBot:
                 await self.send(
                     f"Utolsó futás: fetched={len(summ['fetched'])} "
                     f"analyzed={summ['analyzed_count']} picks={summ['picks_count']} "
-                    f"file={self.runtime.get('last_picks_file')} TOP_MODE={TOP_MODE}{tm_info}", chat_id)
+                    f"file={self.runtime.get('last_picks_file')}{tm_info}", chat_id)
         elif cmd == "/picks":
             summ = self.runtime.get("last_summary")
             if not summ:
@@ -2997,26 +3764,91 @@ class TelegramBot:
                     if len(picks)>30: lines.append(f"... összesen {len(picks)}")
                     await self.send("\n".join(lines), chat_id)
         elif cmd in ("/ticket","/szelveny"):
-            summ = self.runtime.get("last_summary")
-            tickets = summ.get("tickets") if summ and summ.get("tickets") else build_offline_tickets(DATA_ROOT)
-            def fmt(entry,title):
+            def fmt(entry, title):
                 if not entry: return f"{title}:\n  Nincs ajánlás."
-                rat=entry.get("rationale","")
-                if len(rat)>RATIONALE_MAXLEN: rat=rat[:RATIONALE_MAXLEN]+"..."
+                
+                # New enhanced telegram format
+                market_emoji = {"1X2": "⚽", "BTTS": "🥅", "O/U 2.5": "📊"}
+                market_hu = {"1X2": "1X2", "BTTS": "BTTS", "O/U 2.5": "O/U 2.5"}
+                
+                # Parse selection for Hungarian display
+                selection = entry.get('selection', '')
+                selection_hu = selection
+                if 'home' in selection.lower():
+                    selection_hu = "Hazai győzelem"
+                elif 'away' in selection.lower():
+                    selection_hu = "Vendég győzelem"
+                elif 'draw' in selection.lower():
+                    selection_hu = "Döntetlen"
+                elif selection.upper() == "YES":
+                    selection_hu = "Igen"
+                elif selection.upper() == "NO":
+                    selection_hu = "Nem"
+                elif "OVER" in selection.upper():
+                    selection_hu = "Felett 2.5"
+                elif "UNDER" in selection.upper():
+                    selection_hu = "Alatt 2.5"
+                
+                # Confidence level based on edge value
+                edge_val = entry.get('edge', 0)
+                confidence = "Alacsony"
+                if edge_val >= 0.15:
+                    confidence = "Magas"
+                elif edge_val >= 0.08:
+                    confidence = "Közepes"
+                
+                # Market strength calculation (if available)
+                market_strength = entry.get('market_strength', None)
+                market_strength_str = ""
+                if market_strength is not None:
+                    market_strength_str = f"\n💪 Piac-erő: {market_strength:.1f}%"
+                
+                # Model and market probabilities
+                model_prob = entry.get('model_prob', 0) * 100
+                market_prob = entry.get('market_prob', 0) * 100
+                
+                # Format kickoff time
+                kickoff = entry.get('kickoff_local', entry.get('kickoff_utc', '?'))
+                
                 return (
-                    f"{title}:\n"
-                    f"  {entry.get('league_name','?')} (tier={entry.get('league_tier')})\n"
-                    f"  {entry.get('home_name','?')} vs {entry.get('away_name','?')}\n"
-                    f"  Kezdés: {entry.get('kickoff_local','?')} ({LOCAL_TZ})\n"
-                    f"  Tipp: {entry.get('selection_label',entry['selection'])} @ {entry['odds']}\n"
-                    f"  p={round(entry['model_prob']*100,2)}% edge={entry['edge']} FI#{entry['fixture_id']}\n"
-                    f"  Rationale: {rat}"
+                    f"{market_emoji.get(title, '⚽')} {market_hu.get(title, title)} – {entry.get('league_name','?')}\n"
+                    f"{entry.get('home_name','?')} vs {entry.get('away_name','?')}\n"
+                    f"🕒 {kickoff}\n"
+                    f"🎯 Tipp: {selection_hu} @ {entry['odds']}\n"
+                    f"📊 Modell: {model_prob:.1f}% | Piac: {market_prob:.1f}%\n"
+                    f"📈 Érték: +{edge_val*100:.1f}%\n"
+                    f"🔒 Bizalom: {confidence}{market_strength_str}"
                 )
-            msg="\n\n".join([
-                fmt(tickets.get("x1x2"),"1X2"),
-                fmt(tickets.get("btts"),"BTTS"),
-                fmt(tickets.get("overunder"),"O/U 2.5")
-            ])
+            
+            # Use enhanced ticket selection for multiple tips per market
+            summ = self.runtime.get("last_summary")
+            if summ and summ.get("analyzed_results"):
+                enhanced_tickets = select_best_tickets_enhanced(summ.get("analyzed_results"), only_today=True, max_tips_per_market=2)
+            else:
+                enhanced_tickets = {"x1x2": [], "btts": [], "overunder": []}
+            
+            def fmt_enhanced(entries, title):
+                if not entries: 
+                    return f"🚫 {title}: Nincs ajánlás"
+                
+                results = []
+                for i, entry in enumerate(entries[:2]):  # Max 2 tips per market
+                    result = fmt(entry, title)
+                    if i > 0:  # Add separator for multiple tips
+                        result = "─" * 25 + "\n" + result
+                    results.append(result)
+                return "\n".join(results)
+            
+            msg_parts = [
+                fmt_enhanced(enhanced_tickets.get("x1x2", []), "1X2"),
+                fmt_enhanced(enhanced_tickets.get("btts", []), "BTTS"), 
+                fmt_enhanced(enhanced_tickets.get("overunder", []), "O/U 2.5")
+            ]
+            
+            msg = "\n\n".join([part for part in msg_parts if "Nincs ajánlás" not in part])
+            if not msg:
+                msg = "🚫 Nincs tipp ma"
+            
             await self.send(msg, chat_id)
         elif cmd == "/refresh_tickets":
             tickets = build_offline_tickets(DATA_ROOT)
@@ -3080,7 +3912,7 @@ class TelegramBot:
                     fixture_ids=fids
                 elif args[0].isdigit():
                     days_override=int(args[0])
-            await self.send(f"Futás indult (fetch+analyze) TOP_MODE={TOP_MODE} USE_TIPPMIX={USE_TIPPMIX}...", chat_id)
+            await self.send(f"Futás indult (fetch+analyze) USE_TIPPMIX={USE_TIPPMIX}...", chat_id)
             try:
                 summary = await run_pipeline(
                     fetch=True,
@@ -3094,7 +3926,7 @@ class TelegramBot:
                 self.runtime["last_summary"] = summary
                 await self.send(
                     f"Kész: fetched={len(summary['fetched'])} analyzed={summary['analyzed_count']} "
-                    f"picks={summary['picks_count']} TOP_MODE={TOP_MODE}", chat_id)
+                    f"picks={summary['picks_count']}", chat_id)
             except Exception as e:
                 logger.exception("Run hiba (telegram)")
                 await self.send(f"Hiba: {e}", chat_id)
@@ -3135,7 +3967,7 @@ def parse_args():
 # =========================================================
 def main():
     import sys
-    logger.info(">>> MAIN START | USE_TIPPMIX=%s | TOP_MODE=%s | argv=%s", USE_TIPPMIX, TOP_MODE, sys.argv)
+    logger.info(">>> MAIN START | USE_TIPPMIX=%s | argv=%s", USE_TIPPMIX, sys.argv)
     args=parse_args()
 
     if args.reload_leagues:
