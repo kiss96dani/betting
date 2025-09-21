@@ -3901,10 +3901,10 @@ class TelegramBot:
                     if len(picks)>30: lines.append(f"... összesen {len(picks)}")
                     await self.send("\n".join(lines), chat_id)
         elif cmd in ("/ticket","/szelveny"):
-            # Use enhanced ticket selection for multiple tips per market
+            # Use enhanced ticket selection for best value/edge tips (consistent with /run command)
             summ = self.runtime.get("last_summary")
             if summ and summ.get("analyzed_results"):
-                enhanced_tickets = select_best_tickets_enhanced(summ.get("analyzed_results"), only_today=True, max_tips_per_market=2)
+                enhanced_tickets = select_best_tickets_enhanced(summ.get("analyzed_results"), only_today=True, max_tips_per_market=1)
             else:
                 enhanced_tickets = {"x1x2": [], "btts": [], "overunder": []}
             
@@ -4004,7 +4004,7 @@ class TelegramBot:
                     
                     if has_tickets:
                         # Send a header message for the daily recommendations
-                        await self.send("📊 **NAPI SZELVÉNY AJÁNLÁSOK** (Legjobb value/edge tippek)", chat_id)
+                        await self.send("📊 NAPI SZELVÉNY AJÁNLÁSOK (Legjobb value/edge tippek)", chat_id)
                         
                         # Send the formatted ticket recommendations
                         ticket_msg = self.format_ticket_message(enhanced_tickets)
