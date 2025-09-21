@@ -1,42 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Integrált Sportfogadási Bot – SUPerset (API-Football + TippmixPro WAMP + Telegram + Kalibráció + Bayes + MC)
-
-FRISSÍTÉS (C, D, E PONTOK BEÉPÍTVE) – 2025-09-10
-
-ÚJ FUNKCIÓK / MÓDOSÍTÁSOK (a kérés szerinti C, D, E csomag):
-C) Odds és edge bővítés:
-   - Overround / margin számítás 1X2 és 2-way (BTTS, O/U 2.5) piacokra.
-   - Normalizált (margin levont) implied valószínűségek mentése.
-   - Több edge metrika: raw_edge (p*odds-1), margin_adj_edge (p_model - p_implied_norm), z_edge
-     (Bernoulli variancia alapján standardizált különbség), rel_value (raw_edge / odds).
-   - analysis.json kiegészítve: market_prob_details. Picks / ticket rationale bővítve margin/diff értékekkel.
-
-D) Kalibráció dataset gondozás:
-   - Kalibrációs history trimming (CALIBRATION_HISTORY_MAX, default 15000 minta kategóriánként).
-   - Ensemble valószínűségek (ha vannak) eltárolása külön szekcióban (hist["ensemble"][cat]).
-   - Reliability diagram generálás JSON formátumban (bin szerinti empirikus hit rate) ha GENERATE_RELIABILITY=1.
-     (Paraméterezhető CALIBRATION_BIN_SIZE – default 0.05)
-   - update_calibration_history_from_results most az ensemble_probs-et is gyűjti (ha van).
-   - retrain_calibrators jelenleg továbbra is a base raw-ot használja (ensemble kalibráció opcionálisan később).
-
-E) Bayes optimalizáció:
-   - Minimum mintaszám feltételek: BAYES_MIN_MATCHES, BAYES_MIN_TEAM_MATCHES.
-   - Lambda posterior átlagok clipping: BAYES_LAMBDA_MIN <= λ <= BAYES_LAMBDA_MAX.
-   - Időlimit a Bayes futásra (BAYES_MAX_SECONDS) – külön threadben futtatva, timeout-ra skip.
-   - Ha feltételek nem teljesülnek vagy timeout / hiba történik → Bayes disabled fallback.
-
-Megjegyzés:
-  A monolit fájl (betting.py) szerkezetét megőriztem, de a releváns részeknél jelöltem a
-  # === (C) / (D) / (E) === kommenteket.
-
-FIGYELEM:
-  - A korábbi kódhoz képest minden eddigi funkció megmaradt.
-  - A tokenek és fallback kulcsok továbbra is a felhasználó által megadott logika szerint működnek;
-    éles környezetben ajánlott a fallback API kulcs végleges eltávolítása.
-
-"""
 
 from __future__ import annotations
 import os, math, json, asyncio, aiohttp, logging, re, argparse, shutil, random, hashlib, unicodedata, time
@@ -4070,3 +4033,4 @@ if __name__ == "__main__":
     except Exception:
         logger.exception("Főprogram hiba – kilépés")
         raise
+
