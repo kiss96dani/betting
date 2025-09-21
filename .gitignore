@@ -20,4 +20,4 @@ data/
 .idea/
 
 # Environment files
-.env
+.env__pycache__/
