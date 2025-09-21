@@ -3692,6 +3692,90 @@ class TelegramBot:
                     logger.exception("Polling hiba – %.1fs múlva újra.", wait_s)
                     await asyncio.sleep(wait_s)
                     backoff = min(backoff * 2, max_backoff)
+    def format_ticket_message(self, enhanced_tickets: dict) -> str:
+        """
+        Unified ticket formatting function for consistent display in both /ticket and /run commands
+        """
+        def fmt_tip(entry, title):
+            if not entry: return f"{title}:\n  Nincs ajánlás."
+            
+            # New enhanced telegram format
+            market_emoji = {"1X2": "⚽", "BTTS": "🥅", "O/U 2.5": "📊"}
+            market_hu = {"1X2": "1X2", "BTTS": "BTTS", "O/U 2.5": "O/U 2.5"}
+            
+            # Parse selection for Hungarian display
+            selection = entry.get('selection', '')
+            selection_hu = selection
+            if 'home' in selection.lower():
+                selection_hu = "Hazai győzelem"
+            elif 'away' in selection.lower():
+                selection_hu = "Vendég győzelem"
+            elif 'draw' in selection.lower():
+                selection_hu = "Döntetlen"
+            elif selection.upper() == "YES":
+                selection_hu = "Igen"
+            elif selection.upper() == "NO":
+                selection_hu = "Nem"
+            elif "OVER" in selection.upper():
+                selection_hu = "Felett 2.5"
+            elif "UNDER" in selection.upper():
+                selection_hu = "Alatt 2.5"
+            
+            # Confidence level based on edge value
+            edge_val = entry.get('edge', 0)
+            confidence = "Alacsony"
+            if edge_val >= 0.15:
+                confidence = "Magas"
+            elif edge_val >= 0.08:
+                confidence = "Közepes"
+            
+            # Market strength calculation (if available)
+            market_strength = entry.get('market_strength', None)
+            market_strength_str = ""
+            if market_strength is not None:
+                market_strength_str = f"\n💪 Piac-erő: {market_strength:.1f}%"
+            
+            # Model and market probabilities
+            model_prob = entry.get('model_prob', 0) * 100
+            market_prob = entry.get('market_prob', 0) * 100
+            
+            # Format kickoff time
+            kickoff = entry.get('kickoff_local', entry.get('kickoff_utc', '?'))
+            
+            return (
+                f"{market_emoji.get(title, '⚽')} {market_hu.get(title, title)} – {entry.get('league_name','?')}\n"
+                f"{entry.get('home_name','?')} vs {entry.get('away_name','?')}\n"
+                f"🕒 {kickoff}\n"
+                f"🎯 Tipp: {selection_hu} @ {entry['odds']}\n"
+                f"📊 Modell: {model_prob:.1f}% | Piac: {market_prob:.1f}%\n"
+                f"📈 Érték: +{edge_val*100:.1f}%\n"
+                f"🔒 Bizalom: {confidence}{market_strength_str}"
+            )
+        
+        def fmt_enhanced_tips(entries, title):
+            if not entries: 
+                return f"🚫 {title}: Nincs ajánlás"
+            
+            results = []
+            for i, entry in enumerate(entries[:2]):  # Max 2 tips per market
+                result = fmt_tip(entry, title)
+                if i > 0:  # Add separator for multiple tips
+                    result = "─" * 25 + "\n" + result
+                results.append(result)
+            return "\n".join(results)
+        
+        msg_parts = [
+            fmt_enhanced_tips(enhanced_tickets.get("x1x2", []), "1X2"),
+            fmt_enhanced_tips(enhanced_tickets.get("btts", []), "BTTS"), 
+            fmt_enhanced_tips(enhanced_tickets.get("overunder", []), "O/U 2.5")
+        ]
+        
+        msg = "\n\n".join([part for part in msg_parts if "Nincs ajánlás" not in part])
+        if not msg:
+            msg = "🚫 Nincs tipp ma"
+        
+        return msg
+
     async def handle_command(self, text: str, chat_id: str):
         parts = text.split()
         cmd = parts[0].lower()
@@ -3817,62 +3901,6 @@ class TelegramBot:
                     if len(picks)>30: lines.append(f"... összesen {len(picks)}")
                     await self.send("\n".join(lines), chat_id)
         elif cmd in ("/ticket","/szelveny"):
-            def fmt(entry, title):
-                if not entry: return f"{title}:\n  Nincs ajánlás."
-                
-                # New enhanced telegram format
-                market_emoji = {"1X2": "⚽", "BTTS": "🥅", "O/U 2.5": "📊"}
-                market_hu = {"1X2": "1X2", "BTTS": "BTTS", "O/U 2.5": "O/U 2.5"}
-                
-                # Parse selection for Hungarian display
-                selection = entry.get('selection', '')
-                selection_hu = selection
-                if 'home' in selection.lower():
-                    selection_hu = "Hazai győzelem"
-                elif 'away' in selection.lower():
-                    selection_hu = "Vendég győzelem"
-                elif 'draw' in selection.lower():
-                    selection_hu = "Döntetlen"
-                elif selection.upper() == "YES":
-                    selection_hu = "Igen"
-                elif selection.upper() == "NO":
-                    selection_hu = "Nem"
-                elif "OVER" in selection.upper():
-                    selection_hu = "Felett 2.5"
-                elif "UNDER" in selection.upper():
-                    selection_hu = "Alatt 2.5"
-                
-                # Confidence level based on edge value
-                edge_val = entry.get('edge', 0)
-                confidence = "Alacsony"
-                if edge_val >= 0.15:
-                    confidence = "Magas"
-                elif edge_val >= 0.08:
-                    confidence = "Közepes"
-                
-                # Market strength calculation (if available)
-                market_strength = entry.get('market_strength', None)
-                market_strength_str = ""
-                if market_strength is not None:
-                    market_strength_str = f"\n💪 Piac-erő: {market_strength:.1f}%"
-                
-                # Model and market probabilities
-                model_prob = entry.get('model_prob', 0) * 100
-                market_prob = entry.get('market_prob', 0) * 100
-                
-                # Format kickoff time
-                kickoff = entry.get('kickoff_local', entry.get('kickoff_utc', '?'))
-                
-                return (
-                    f"{market_emoji.get(title, '⚽')} {market_hu.get(title, title)} – {entry.get('league_name','?')}\n"
-                    f"{entry.get('home_name','?')} vs {entry.get('away_name','?')}\n"
-                    f"🕒 {kickoff}\n"
-                    f"🎯 Tipp: {selection_hu} @ {entry['odds']}\n"
-                    f"📊 Modell: {model_prob:.1f}% | Piac: {market_prob:.1f}%\n"
-                    f"📈 Érték: +{edge_val*100:.1f}%\n"
-                    f"🔒 Bizalom: {confidence}{market_strength_str}"
-                )
-            
             # Use enhanced ticket selection for multiple tips per market
             summ = self.runtime.get("last_summary")
             if summ and summ.get("analyzed_results"):
@@ -3880,28 +3908,8 @@ class TelegramBot:
             else:
                 enhanced_tickets = {"x1x2": [], "btts": [], "overunder": []}
             
-            def fmt_enhanced(entries, title):
-                if not entries: 
-                    return f"🚫 {title}: Nincs ajánlás"
-                
-                results = []
-                for i, entry in enumerate(entries[:2]):  # Max 2 tips per market
-                    result = fmt(entry, title)
-                    if i > 0:  # Add separator for multiple tips
-                        result = "─" * 25 + "\n" + result
-                    results.append(result)
-                return "\n".join(results)
-            
-            msg_parts = [
-                fmt_enhanced(enhanced_tickets.get("x1x2", []), "1X2"),
-                fmt_enhanced(enhanced_tickets.get("btts", []), "BTTS"), 
-                fmt_enhanced(enhanced_tickets.get("overunder", []), "O/U 2.5")
-            ]
-            
-            msg = "\n\n".join([part for part in msg_parts if "Nincs ajánlás" not in part])
-            if not msg:
-                msg = "🚫 Nincs tipp ma"
-            
+            # Use unified formatting function
+            msg = self.format_ticket_message(enhanced_tickets)
             await self.send(msg, chat_id)
         elif cmd == "/refresh_tickets":
             tickets = build_offline_tickets(DATA_ROOT)
@@ -3977,9 +3985,35 @@ class TelegramBot:
                     days_ahead_override=days_override
                 )
                 self.runtime["last_summary"] = summary
+                
+                # Send pipeline status summary first
                 await self.send(
                     f"Kész: fetched={len(summary['fetched'])} analyzed={summary['analyzed_count']} "
                     f"picks={summary['picks_count']} TOP_MODE={TOP_MODE}", chat_id)
+                
+                # Automatically generate and send daily ticket recommendations
+                if summary.get("analyzed_results"):
+                    enhanced_tickets = select_best_tickets_enhanced(
+                        summary.get("analyzed_results"), 
+                        only_today=True, 
+                        max_tips_per_market=1  # Use max 1 tip per market for best value
+                    )
+                    
+                    # Check if we have any tickets to send
+                    has_tickets = any(enhanced_tickets.get(market, []) for market in ["x1x2", "btts", "overunder"])
+                    
+                    if has_tickets:
+                        # Send a header message for the daily recommendations
+                        await self.send("📊 **NAPI SZELVÉNY AJÁNLÁSOK** (Legjobb value/edge tippek)", chat_id)
+                        
+                        # Send the formatted ticket recommendations
+                        ticket_msg = self.format_ticket_message(enhanced_tickets)
+                        await self.send(ticket_msg, chat_id)
+                    else:
+                        await self.send("📭 Nincs napi szelvény ajánlás - nem található megfelelő value tipp", chat_id)
+                else:
+                    await self.send("⚠️ Nincs elemzési eredmény - szelvény nem generálható", chat_id)
+                    
             except Exception as e:
                 logger.exception("Run hiba (telegram)")
                 await self.send(f"Hiba: {e}", chat_id)
