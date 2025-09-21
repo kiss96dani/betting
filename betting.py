@@ -2772,16 +2772,20 @@ def load_all_analysis(root: Path)->list[dict]:
 def build_offline_tickets(root: Path)->dict:
     analyzed=load_all_analysis(root)
     if not analyzed:
-        return {"x1x2": None,"btts": None,"overunder": None}
-    return select_best_tickets(analyzed, only_today=TICKET_ONLY_TODAY)
+        return {"x1x2": [], "btts": [], "overunder": []}
+    return select_best_tickets_enhanced(analyzed, only_today=TICKET_ONLY_TODAY, max_tips_per_market=2)
 
 def save_ticket_full_analysis(tickets: dict, root: Path)->Optional[Path]:
     if not tickets: return None
     fixture_ids=[]
     for k in ("x1x2","btts","overunder"):
-        e=tickets.get(k)
-        if e and e.get("fixture_id"):
-            fixture_ids.append(e["fixture_id"])
+        entries = tickets.get(k, [])
+        if isinstance(entries, list):
+            for e in entries:
+                if e and e.get("fixture_id"):
+                    fixture_ids.append(e["fixture_id"])
+        elif entries and entries.get("fixture_id"):  # Backward compatibility for single items
+            fixture_ids.append(entries["fixture_id"])
     fixture_ids=sorted(set(fixture_ids))
     if not fixture_ids: return None
     items=[]
@@ -3494,7 +3498,8 @@ async def run_pipeline(fetch: bool, analyze: bool,
                 logger.info("Elemzés haladás: %d / %d", idx, len(valid))
         picks=allocate_stakes(analyzed_res)
         register_picks(picks)
-        tickets=select_best_tickets(analyzed_res, only_today=TICKET_ONLY_TODAY)
+        # Use enhanced ticket selection for multiple tips per market (1X2, BTTS, Over/Under)
+        tickets=select_best_tickets_enhanced(analyzed_res, only_today=TICKET_ONLY_TODAY, max_tips_per_market=2)
         if tickets: save_ticket_full_analysis(tickets, DATA_ROOT)
         
         # Generate comprehensive statistics with all match details
@@ -3817,9 +3822,16 @@ class TelegramBot:
             tickets = build_offline_tickets(DATA_ROOT)
             if tickets:
                 save_ticket_full_analysis(tickets, DATA_ROOT)
-            def lab(entry,t):
-                if not entry: return f"{t}: nincs."
-                return f"{t}: FI#{entry['fixture_id']} {entry.get('home_name','?')} vs {entry.get('away_name','?')} {entry.get('selection_label', entry['selection'])} @ {entry['odds']} edge={entry['edge']}"
+            def lab(entries, t):
+                if not entries or not isinstance(entries, list): 
+                    return f"{t}: nincs."
+                if len(entries) == 0:
+                    return f"{t}: nincs."
+                results = []
+                for i, entry in enumerate(entries[:2], 1):  # Max 2 tips per market
+                    text = f"{t}#{i}: FI#{entry['fixture_id']} {entry.get('home_name','?')} vs {entry.get('away_name','?')} {entry.get('selection_label', entry['selection'])} @ {entry['odds']} edge={entry['edge']:.3f}"
+                    results.append(text)
+                return "\n".join(results)
             await self.send("\n".join([
                 lab(tickets.get("x1x2"),"1X2"),
                 lab(tickets.get("btts"),"BTTS"),
