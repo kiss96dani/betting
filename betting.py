@@ -2439,6 +2439,129 @@ def select_best_tickets_enhanced(analyzed_results: list[dict], only_today: bool=
         "overunder": candidates_ou[:max_tips_per_market] if candidates_ou else []
     }
 
+def select_auto_value_bets(analyzed_results: list[dict], only_today: bool=True) -> dict:
+    """
+    Automatikusan kiválasztja a legjobb value bet-et minden támogatott szelvénytípusra
+    (1X2, BTTS, Over/Under). Típusonként a legmagasabb value score-ú mérkőzést adja vissza.
+    """
+    logger.info("Automatikus value bet kiválasztás indul...")
+    
+    # Get enhanced tickets with all candidates
+    enhanced_tickets = select_best_tickets_enhanced(analyzed_results, only_today=only_today, max_tips_per_market=50)
+    
+    # Select the best single bet for each market type
+    best_bets = {}
+    
+    # 1X2 Market - highest value score
+    if enhanced_tickets.get("x1x2"):
+        candidates_1x2 = enhanced_tickets["x1x2"]
+        best_1x2 = max(candidates_1x2, key=lambda x: x["value_score"])
+        best_bets["1X2"] = best_1x2
+        logger.info(f"1X2 legjobb bet: FI#{best_1x2['fixture_id']} {best_1x2['selection']} @ {best_1x2['odds']} (edge: {best_1x2['edge']:.3f}, value: {best_1x2['value_score']:.3f})")
+    
+    # BTTS Market - highest value score  
+    if enhanced_tickets.get("btts"):
+        candidates_btts = enhanced_tickets["btts"]
+        best_btts = max(candidates_btts, key=lambda x: x["value_score"])
+        best_bets["BTTS"] = best_btts
+        logger.info(f"BTTS legjobb bet: FI#{best_btts['fixture_id']} {best_btts['selection']} @ {best_btts['odds']} (edge: {best_btts['edge']:.3f}, value: {best_btts['value_score']:.3f})")
+    
+    # Over/Under Market - highest value score
+    if enhanced_tickets.get("overunder"):
+        candidates_ou = enhanced_tickets["overunder"]
+        best_ou = max(candidates_ou, key=lambda x: x["value_score"])
+        best_bets["O/U"] = best_ou
+        logger.info(f"O/U legjobb bet: FI#{best_ou['fixture_id']} {best_ou['selection']} @ {best_ou['odds']} (edge: {best_ou['edge']:.3f}, value: {best_ou['value_score']:.3f})")
+    
+    logger.info(f"Automatikus kiválasztás kész: {len(best_bets)} piac, összesen {len(best_bets)} ajánlás")
+    return best_bets
+
+def generate_detailed_bet_message(bet_data: dict, market_type: str) -> str:
+    """
+    Részletes szelvény üzenet generálása egy value bet-hez Magyar formátumban
+    """
+    # Market type emojis and Hungarian names
+    market_emojis = {"1X2": "⚽", "BTTS": "🥅", "O/U": "📊"}
+    market_names_hu = {"1X2": "Végeredmény", "BTTS": "Mindkét csapat gólt szerez", "O/U": "Gólok száma (2.5)"}
+    
+    # Selection translation to Hungarian
+    selection = bet_data.get('selection', '')
+    selection_hu = selection
+    if 'HOME' in selection.upper():
+        selection_hu = "Hazai győzelem"
+    elif 'AWAY' in selection.upper():
+        selection_hu = "Vendég győzelem" 
+    elif 'DRAW' in selection.upper():
+        selection_hu = "Döntetlen"
+    elif selection.upper() == "YES":
+        selection_hu = "Igen"
+    elif selection.upper() == "NO":
+        selection_hu = "Nem"
+    elif "OVER" in selection.upper():
+        selection_hu = "Felett 2.5 gól"
+    elif "UNDER" in selection.upper():
+        selection_hu = "Alatt 2.5 gól"
+    
+    # Confidence level based on edge value
+    edge_val = bet_data.get('edge', 0)
+    confidence = "Alacsony"
+    confidence_emoji = "🔸"
+    if edge_val >= 0.15:
+        confidence = "Magas"
+        confidence_emoji = "🔥"
+    elif edge_val >= 0.08:
+        confidence = "Közepes" 
+        confidence_emoji = "⚡"
+    
+    # Value score calculation
+    value_score = bet_data.get('value_score', 0)
+    
+    # Model and market probabilities as percentages
+    model_prob = bet_data.get('model_prob', 0) * 100
+    market_prob = bet_data.get('market_prob', 0) * 100
+    
+    # Market strength
+    market_strength = bet_data.get('market_strength', 0)
+    
+    # Format kickoff time
+    kickoff = bet_data.get('kickoff_local', bet_data.get('kickoff_utc', '?'))
+    
+    # League information with tier emoji
+    league_name = bet_data.get('league_name', 'Ismeretlen liga')
+    league_tier = bet_data.get('league_tier', '')
+    tier_emoji = "🌟" if league_tier in ("TIER1", "TIER1B") else "⚪"
+    
+    # Generate detailed explanation
+    message = f"""🎯 **AUTOMATIKUS VALUE BET**
+
+{market_emojis.get(market_type, '⚽')} **{market_names_hu.get(market_type, market_type)}**
+{tier_emoji} **{league_name}**
+
+**⚽ Mérkőzés:**
+{bet_data.get('home_name', '?')} vs {bet_data.get('away_name', '?')}
+🕒 {kickoff}
+
+**💰 Ajánlás:**
+🎯 **{selection_hu}** @ **{bet_data['odds']}**
+
+**📊 Elemzés:**
+📈 Modell valószínűség: **{model_prob:.1f}%**
+🏪 Piac valószínűség: **{market_prob:.1f}%**
+⚡ Edge (előny): **+{edge_val*100:.1f}%**
+🔥 Value Score: **{value_score:.3f}**
+
+**💪 Bizalmi szint:**
+{confidence_emoji} **{confidence}** bizalom
+
+**🏛️ Piac információ:**
+📊 Piac erő: **{market_strength:.1f}%**
+🆔 Fixture ID: #{bet_data.get('fixture_id', '?')}
+
+**💡 Indoklás:**
+A modellünk **{model_prob:.1f}%** valószínűséget ad erre az eredményre, míg a piac csak **{market_prob:.1f}%**-ot ár be. Ez **{edge_val*100:.1f}%** előnyt jelent számunkra, ami {confidence.lower()} bizalmi szintű value betting lehetőség."""
+
+    return message
+
 def select_best_tickets(analyzed_results: list[dict], only_today: bool=True) -> dict:
     tz=ZoneInfo(LOCAL_TZ)
     today_local=datetime.now(tz=tz).date()
@@ -3616,6 +3739,7 @@ class TelegramBot:
                 "Parancsok:\n"
                 "/run | /run 1 | /run ids <idk>\n"
                 "/ticket (/szelveny)\n"
+                "/autobets (/autovalue) - Automatikus value bet kiválasztás\n"
                 "/status\n"
                 "/picks\n"
                 "/limit <n>\n"
@@ -3893,6 +4017,43 @@ class TelegramBot:
             except Exception as e:
                 logger.exception("Run hiba (telegram)")
                 await self.send(f"Hiba: {e}", chat_id)
+
+        elif cmd in ("/autobets", "/autovalue"):
+            await self.send("🎯 Automatikus value bet kiválasztás indul...", chat_id)
+            try:
+                summ = self.runtime.get("last_summary")
+                if not summ or not summ.get("analyzed_results"):
+                    await self.send("❌ Nincs elérhető elemzés. Futtasd a /run parancsot először!", chat_id)
+                    return
+                
+                # Get the best value bets for each market type
+                best_bets = select_auto_value_bets(summ.get("analyzed_results"), only_today=True)
+                
+                if not best_bets:
+                    await self.send("🚫 Nincs megfelelő value bet ma. Próbáld újra később!", chat_id)
+                    return
+                
+                # Send separate message for each bet type
+                sent_count = 0
+                for market_type, bet_data in best_bets.items():
+                    try:
+                        message = generate_detailed_bet_message(bet_data, market_type)
+                        await self.send(message, chat_id)
+                        sent_count += 1
+                        
+                        # Small delay between messages to avoid rate limiting
+                        await asyncio.sleep(0.5)
+                        
+                    except Exception as e:
+                        logger.exception(f"Hiba a {market_type} üzenet küldésekor")
+                        await self.send(f"❌ Hiba a {market_type} üzenet küldésekor: {str(e)}", chat_id)
+                
+                # Summary message
+                await self.send(f"✅ Automatikus value bet kiválasztás kész! {sent_count} ajánlás elküldve.", chat_id)
+                
+            except Exception as e:
+                logger.exception("Automatikus value bet hiba")
+                await self.send(f"❌ Hiba az automatikus value bet kiválasztáskor: {str(e)}", chat_id)
 
         elif cmd == "/stop":
             await self.send("Leállítás kérve – viszlát!", chat_id)
