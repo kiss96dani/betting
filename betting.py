@@ -3698,21 +3698,20 @@ class TelegramBot:
         args = parts[1:]
         if cmd in ("/help","/start"):
             await self.send(
-                "Parancsok:\n"
+                "🤖 Betting Bot Parancsok:\n\n"
+                "📊 Általános:\n"
                 "/run | /run 1 | /run ids <idk>\n"
                 "/ticket (/szelveny)\n"
                 "/status\n"
                 "/picks\n"
-                "/limit <n>\n"
-                "/setdays <n>\n"
-                "/cleanup\n"
-                "/refresh_tickets\n"
+                "/limit <n> | /setdays <n>\n"
+                "/cleanup | /refresh_tickets\n"
                 "/dailyreport\n"
                 "/mode <top_only|hybrid|all>\n"
                 "/tiers | /leagues <minta> | /reloadtiers\n"
                 "/updatecal | /retraincal | /exportbayes\n"
-                "/tippmixstats\n"
-                "\n🎯 TippmixPro parancsok:\n"
+                "/tippmixstats\n\n"
+                "🎯 TippmixPro vezérlés (12 parancs):\n"
                 "/tippmix_start - Scraping indítása\n"
                 "/tippmix_stop - Scraping leállítása\n"
                 "/tippmix_status - Scraper állapot\n"
@@ -3723,7 +3722,9 @@ class TelegramBot:
                 "/analyze_tippmix - Teljes elemzés\n"
                 "/best_odds - Legjobb odds-ok\n"
                 "/edge_analysis - Edge számítás\n"
-                "/stop", chat_id)
+                "/watch_start - Odds watcher indítása\n"
+                "/watch_stop - Odds watcher leállítása\n\n"
+                "/stop - Bot leállítása", chat_id)
         elif cmd == "/mode":
             if args and args[0] in ("top_only","hybrid","all"):
                 global TOP_MODE
@@ -3886,6 +3887,26 @@ class TelegramBot:
                 # Format kickoff time
                 kickoff = entry.get('kickoff_local', entry.get('kickoff_utc', '?'))
                 
+                # Add TippmixPro odds comparison if available
+                tippmix_info = ""
+                if USE_TIPPMIX and entry.get('has_tippmix_odds'):
+                    tippmix_odds = entry.get('tippmix_odds', {})
+                    market_key = title.lower().replace(' ', '_').replace('/', '').replace('.', '')
+                    if market_key == 'ou_25':
+                        market_key = 'ou25'
+                    elif market_key == '1x2':
+                        market_key = 'one_x_two'
+                    
+                    if tippmix_odds.get(market_key):
+                        tm_market = tippmix_odds[market_key]
+                        selection_key = entry.get('selection', '').upper()
+                        if selection_key in tm_market:
+                            tm_odd = tm_market[selection_key]
+                            api_odd = entry['odds']
+                            diff = tm_odd - api_odd
+                            emoji = "📈" if diff > 0.05 else "📉" if diff < -0.05 else "➡️"
+                            tippmix_info = f"\n🎯 TippmixPro: {tm_odd:.2f} {emoji} ({diff:+.2f})"
+                
                 return (
                     f"{market_emoji.get(title, '⚽')} {market_hu.get(title, title)} – {entry.get('league_name','?')}\n"
                     f"{entry.get('home_name','?')} vs {entry.get('away_name','?')}\n"
@@ -3893,7 +3914,7 @@ class TelegramBot:
                     f"🎯 Tipp: {selection_hu} @ {entry['odds']}\n"
                     f"📊 Modell: {model_prob:.1f}% | Piac: {market_prob:.1f}%\n"
                     f"📈 Érték: +{edge_val*100:.1f}%\n"
-                    f"🔒 Bizalom: {confidence}{market_strength_str}"
+                    f"🔒 Bizalom: {confidence}{market_strength_str}{tippmix_info}"
                 )
             
             # Use enhanced ticket selection for multiple tips per market
@@ -4028,6 +4049,10 @@ class TelegramBot:
             await self._handle_best_odds(chat_id)
         elif cmd == "/edge_analysis":
             await self._handle_edge_analysis(chat_id)
+        elif cmd == "/watch_start":
+            await self._handle_watch_start(chat_id)
+        elif cmd == "/watch_stop":
+            await self._handle_watch_stop(chat_id)
 
         elif cmd == "/stop":
             await self.send("Leállítás kérve – viszlát!", chat_id)
@@ -4611,6 +4636,233 @@ class TelegramBot:
                 await self.send(result[4000:8000], chat_id)
         else:
             await self.send(result, chat_id)
+
+    async def _handle_watch_start(self, chat_id: str):
+        """Start the TippmixPro odds watcher"""
+        if not USE_TIPPMIX:
+            await self.send("❌ TippmixPro integráció inaktív", chat_id)
+            return
+            
+        # Check if watcher is already running
+        if hasattr(self, '_watcher_task') and self._watcher_task and not self._watcher_task.done():
+            await self.send("⚠️ Odds watcher már fut", chat_id)
+            return
+            
+        await self.send("🚀 Odds watcher indítása...", chat_id)
+        
+        try:
+            # Ensure we have mapping data first
+            mapping = self.runtime.get("tippmix_mapping", {})
+            if not mapping:
+                await self.send("📊 TippmixPro párosítás létrehozása...", chat_id)
+                await self._handle_tippmix_start(chat_id)
+                await asyncio.sleep(2)  # Wait for mapping to complete
+            
+            # Create stop event for this watcher
+            if not hasattr(self, '_watcher_stop_event'):
+                self._watcher_stop_event = asyncio.Event()
+            else:
+                self._watcher_stop_event.clear()
+            
+            # Start the watcher task
+            self._watcher_task = asyncio.create_task(
+                self._run_odds_watcher_with_notifications(chat_id)
+            )
+            
+            await self.send(
+                f"✅ Odds watcher elindítva!\n"
+                f"⏱️ Frissítési intervallum: {WATCH_INTERVAL_SEC} másodperc\n"
+                f"📊 Figyelt meccsek: {len(self.runtime.get('tippmix_mapping', {}))}\n"
+                f"💡 Használd /watch_stop a leállításhoz", chat_id)
+                
+        except Exception as e:
+            logger.exception("Watcher start hiba")
+            await self.send(f"❌ Hiba watcher indítása közben: {str(e)[:200]}", chat_id)
+
+    async def _handle_watch_stop(self, chat_id: str):
+        """Stop the TippmixPro odds watcher"""
+        if hasattr(self, '_watcher_task') and self._watcher_task and not self._watcher_task.done():
+            await self.send("🛑 Odds watcher leállítása...", chat_id)
+            
+            # Signal the watcher to stop
+            if hasattr(self, '_watcher_stop_event'):
+                self._watcher_stop_event.set()
+            
+            # Wait for the task to complete
+            try:
+                await asyncio.wait_for(self._watcher_task, timeout=5.0)
+                await self.send("✅ Odds watcher leállítva", chat_id)
+            except asyncio.TimeoutError:
+                self._watcher_task.cancel()
+                await self.send("⚠️ Odds watcher kényszerített leállítás", chat_id)
+            except Exception as e:
+                await self.send(f"❌ Hiba watcher leállítása közben: {str(e)[:100]}", chat_id)
+        else:
+            await self.send("ℹ️ Odds watcher nem fut", chat_id)
+
+    async def _run_odds_watcher_with_notifications(self, chat_id: str):
+        """Run odds watcher with Telegram notifications for significant changes"""
+        if not USE_TIPPMIX:
+            return
+            
+        extractor = TippmixOddsExtractor()
+        logger.info("[TELEGRAM-WATCH] Odds watcher indul...")
+        
+        # Send periodic status updates
+        last_status_time = time.time()
+        status_interval = 3600  # 1 hour
+        
+        while not self._watcher_stop_event.is_set():
+            mapping = self.runtime.get("tippmix_mapping", {})
+            if not mapping:
+                logger.info("[TELEGRAM-WATCH] Nincs tippmix_mapping – várakozás...")
+            else:
+                try:
+                    significant_changes = []
+                    async with TippmixProWampClient(verbose=False) as cli:
+                        new_cache = {}
+                        for api_fid, tip_mid in mapping.items():
+                            recs = await cli.fetch_match_markets_group(tip_mid, group_key=TIPPMIX_MARKET_GROUP)
+                            std = extractor.extract(recs)
+                            new_cache[api_fid] = std
+                            old = self.runtime.get("tippmix_odds_cache", {}).get(api_fid)
+                            
+                            if old and std:
+                                # Check for significant odds changes (>0.2 difference)
+                                changes = self._detect_significant_odds_changes(api_fid, old, std)
+                                significant_changes.extend(changes)
+                                
+                            await asyncio.sleep(0.05)
+                    
+                    self.runtime["tippmix_odds_cache"] = new_cache
+                    
+                    # Send notifications for significant changes
+                    if significant_changes:
+                        await self._send_odds_change_notifications(significant_changes, chat_id)
+                    
+                    # Send periodic status update
+                    current_time = time.time()
+                    if current_time - last_status_time >= status_interval:
+                        await self.send(
+                            f"📊 Odds watcher státusz:\n"
+                            f"✅ Fut: {len(new_cache)} meccs\n"
+                            f"🔄 Utolsó frissítés: {datetime.now().strftime('%H:%M:%S')}\n"
+                            f"📈 Jelentős változások: {len(significant_changes)}", chat_id)
+                        last_status_time = current_time
+                        
+                except Exception:
+                    logger.exception("[TELEGRAM-WATCH] Hiba odds frissítés közben.")
+            
+            try:
+                await asyncio.wait_for(self._watcher_stop_event.wait(), timeout=WATCH_INTERVAL_SEC)
+                break  # Stop event was set
+            except asyncio.TimeoutError:
+                continue  # Timeout, continue watching
+                
+        logger.info("[TELEGRAM-WATCH] Odds watcher leállt.")
+
+    def _detect_significant_odds_changes(self, api_fid: str, old_odds: 'StandardOdds', new_odds: 'StandardOdds') -> list:
+        """Detect significant odds changes that should trigger notifications"""
+        changes = []
+        threshold = 0.20  # 0.20 odds difference threshold
+        
+        # Check 1X2 changes
+        if old_odds.one_x_two and new_odds.one_x_two:
+            for outcome in ("HOME", "DRAW", "AWAY"):
+                old_val = old_odds.one_x_two.get(outcome)
+                new_val = new_odds.one_x_two.get(outcome)
+                if old_val and new_val and abs(old_val - new_val) >= threshold:
+                    direction = "📈" if new_val > old_val else "📉"
+                    changes.append({
+                        "fixture_id": api_fid,
+                        "market": "1X2",
+                        "outcome": outcome,
+                        "old_odds": old_val,
+                        "new_odds": new_val,
+                        "change": new_val - old_val,
+                        "direction": direction
+                    })
+        
+        # Check BTTS changes
+        if old_odds.btts and new_odds.btts:
+            for outcome in ("YES", "NO"):
+                old_val = old_odds.btts.get(outcome)
+                new_val = new_odds.btts.get(outcome)
+                if old_val and new_val and abs(old_val - new_val) >= threshold:
+                    direction = "📈" if new_val > old_val else "📉"
+                    changes.append({
+                        "fixture_id": api_fid,
+                        "market": "BTTS",
+                        "outcome": outcome,
+                        "old_odds": old_val,
+                        "new_odds": new_val,
+                        "change": new_val - old_val,
+                        "direction": direction
+                    })
+        
+        # Check O/U 2.5 changes
+        if old_odds.ou25 and new_odds.ou25:
+            for outcome in ("OVER", "UNDER"):
+                old_val = old_odds.ou25.get(outcome)
+                new_val = new_odds.ou25.get(outcome)
+                if old_val and new_val and abs(old_val - new_val) >= threshold:
+                    direction = "📈" if new_val > old_val else "📉"
+                    changes.append({
+                        "fixture_id": api_fid,
+                        "market": "O/U 2.5",
+                        "outcome": outcome,
+                        "old_odds": old_val,
+                        "new_odds": new_val,
+                        "change": new_val - old_val,
+                        "direction": direction
+                    })
+        
+        return changes
+
+    async def _send_odds_change_notifications(self, changes: list, chat_id: str):
+        """Send notifications for significant odds changes"""
+        if not changes:
+            return
+            
+        # Get match names from last summary
+        last_summary = self.runtime.get("last_summary", {})
+        fetched_matches = {str(m.get("fixture", {}).get("id")): m for m in last_summary.get("fetched", [])}
+        
+        # Group changes by fixture
+        changes_by_fixture = {}
+        for change in changes:
+            fid = change["fixture_id"]
+            if fid not in changes_by_fixture:
+                changes_by_fixture[fid] = []
+            changes_by_fixture[fid].append(change)
+        
+        # Send notifications (max 5 fixtures per message)
+        fixture_count = 0
+        message_lines = ["🚨 Jelentős odds változások:"]
+        
+        for fixture_id, fixture_changes in changes_by_fixture.items():
+            if fixture_count >= 5:  # Limit per message
+                break
+                
+            match_info = fetched_matches.get(fixture_id, {})
+            home_team = match_info.get("teams", {}).get("home", {}).get("name", "N/A")
+            away_team = match_info.get("teams", {}).get("away", {}).get("name", "N/A")
+            
+            message_lines.append(f"\n⚽ {home_team} vs {away_team}")
+            
+            for change in fixture_changes[:3]:  # Max 3 changes per fixture
+                message_lines.append(
+                    f"  {change['direction']} {change['market']} {change['outcome']}: "
+                    f"{change['old_odds']:.2f} → {change['new_odds']:.2f} "
+                    f"({change['change']:+.2f})"
+                )
+            
+            fixture_count += 1
+        
+        if fixture_count < len(changes_by_fixture):
+            message_lines.append(f"\n... és még {len(changes_by_fixture) - fixture_count} meccs")
+        
+        await self.send("\n".join(message_lines), chat_id)
 
 
 # =========================================================
