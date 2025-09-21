@@ -528,50 +528,61 @@ class FixtureContext:
     fair_odds: dict
 
 # =========================================================
-# TOP Liga Management (tournaments.json alapú)
+# TOP Liga Management (hardcoded TOP ligák)
 # =========================================================
-def load_top_leagues_from_tournaments() -> Dict[str, List[str]]:
+def load_top_leagues_from_tippmix() -> Dict[str, List[str]]:
     """
-    Betölti a TOP ligákat a tournaments.json fájlból az 'is_top_level' mező alapján.
-    Visszaadja az összes név variációt (name, template_name, translated_name, short_translated_name).
+    Hardcoded TOP ligák listája, tournaments.json helyett.
+    Ez a lista a legnépszerűbb európai és nemzetközi ligákat tartalmazza.
     """
-    tournaments_path = Path("tournaments.json")
-    top_league_names = set()
+    # A legnépszerűbb TOP ligák nevei (különböző variációkban)
+    top_league_names = {
+        # Premier League variants
+        "Premier League", "English Premier League", "Angol Premier League",
+        "EPL", "England Premier League",
+        
+        # La Liga variants  
+        "La Liga", "Spanish La Liga", "Spanyol La Liga", "Primera División",
+        "Spain La Liga", "LaLiga",
+        
+        # Serie A variants
+        "Serie A", "Italian Serie A", "Olasz Serie A", "Italy Serie A",
+        "Serie A TIM",
+        
+        # Bundesliga variants
+        "Bundesliga", "German Bundesliga", "Német Bundesliga", 
+        "Germany Bundesliga", "1. Bundesliga",
+        
+        # Ligue 1 variants
+        "Ligue 1", "French Ligue 1", "Francia Ligue 1", "France Ligue 1",
+        "Ligue 1 Uber Eats",
+        
+        # Champions League variants
+        "Champions League", "UEFA Champions League", "UEFA Bajnokok Ligája",
+        "UCL", "BL", "Bajnokok Ligája",
+        
+        # Europa League variants
+        "Europa League", "UEFA Europa League", "UEFA Európa Liga",
+        "UEL", "Európa Liga",
+        
+        # Other major leagues
+        "Eredivisie", "Dutch Eredivisie", "Holland Eredivisie",
+        "Primeira Liga", "Portuguese Liga", "Portugal Liga",
+        "Scottish Premiership", "Belgium Pro League", "Turkish Super Lig",
+        "Russian Premier League", "Ukrainian Premier League",
+        
+        # International competitions
+        "World Cup", "FIFA World Cup", "European Championship", "Euro",
+        "Copa America", "Nations League", "UEFA Nations League"
+    }
     
-    if not tournaments_path.exists():
-        logger.warning("tournaments.json hiányzik – TOP liga azonosítás korlátozott.")
-        return {"names": [], "count": 0}
+    result = {
+        "names": sorted(list(top_league_names)),
+        "count": len(top_league_names)
+    }
     
-    try:
-        tdata = json.loads(tournaments_path.read_text(encoding="utf-8"))
-        if isinstance(tdata, list):
-            tournaments = tdata
-        else:
-            tournaments = tdata.get("tournaments", [])
-        
-        for tournament in tournaments:
-            if tournament.get("is_top_level", False):
-                # Összes név variáció hozzáadása
-                name_fields = ["name", "template_name", "translated_name", "short_translated_name"]
-                for field in name_fields:
-                    name = tournament.get(field)
-                    if name and isinstance(name, str) and name.strip():
-                        top_league_names.add(name.strip())
-        
-        result = {
-            "names": sorted(list(top_league_names)),
-            "count": len(top_league_names)
-        }
-        
-        logger.info("TOP ligák betöltve tournaments.json-ból: %d név variáció azonosítva", len(top_league_names))
-        for name in sorted(top_league_names):
-            logger.debug("TOP liga név: %s", name)
-            
-        return result
-        
-    except Exception as e:
-        logger.exception("tournaments.json feldolgozási hiba: %s", e)
-        return {"names": [], "count": 0}
+    logger.info("TOP ligák betöltve hardcoded listából: %d név variáció", len(top_league_names))
+    return result
 
 def is_top_league_by_name(league_name: str, top_league_names: List[str]) -> bool:
     """
@@ -594,7 +605,7 @@ def is_top_league_by_name(league_name: str, top_league_names: List[str]) -> bool
     return False
 
 # =========================================================
-# LeagueTierManager (tournaments.json-nal kiterjesztve)
+# LeagueTierManager (hardcoded TOP ligákkal)
 # =========================================================
 class LeagueTierManager:
     DEFAULT_TIER_CFG = {
@@ -620,7 +631,7 @@ class LeagueTierManager:
         self.tier_cfg={}
         self.classified={}
         self._top_ids_set=set()
-        # ÚJ: tournaments.json alapú TOP liga nevek
+        # ÚJ: hardcoded TOP liga nevek (tournaments.json helyett)
         self.top_league_data = {"names": [], "count": 0}
         self._load_or_init_config()
         self._load_or_empty_classified()
@@ -662,8 +673,8 @@ class LeagueTierManager:
         self.classify_cache.parent.mkdir(parents=True, exist_ok=True)
         self.classify_cache.write_text(json.dumps(self.classified, indent=2), encoding="utf-8")
     def _load_top_leagues_from_tournaments(self):
-        """Betölti a TOP ligákat a tournaments.json fájlból."""
-        self.top_league_data = load_top_leagues_from_tournaments()
+        """Betölti a TOP ligákat a hardcoded listából (tournaments.json helyett)."""
+        self.top_league_data = load_top_leagues_from_tippmix()
         
     def _compute_top_ids(self):
         # Megtartjuk a régi tier-alapú logikát fallback-ként
@@ -677,7 +688,7 @@ class LeagueTierManager:
     def is_top(self, league_id: int)->bool:
         """
         Meghatározza, hogy egy liga TOP-e.
-        Elsősorban tournaments.json név alapú, másodsorban ID alapú tier logika.
+        Elsősorban hardcoded név alapú, másodsorban ID alapú tier logika.
         """
         # Először próbálkozás név alapon
         league_name = self.get_league_name(league_id)
@@ -1559,28 +1570,18 @@ async def tippmix_fetch_all_leagues_robust() -> list[dict]:
     return list(unique_tournaments.values())
 
 async def tippmix_fetch_and_map(days_ahead: int) -> dict:
-    # First try to get tournaments from enhanced robust fetching
+    # Get tournaments from enhanced robust fetching (only from TippmixPro)
     try:
         robust_tournaments = await tippmix_fetch_all_leagues_robust()
         if robust_tournaments:
             tours = robust_tournaments
-            logger.info(f"Using {len(tours)} tournaments from robust fetching")
+            logger.info(f"TippmixPro-ból betöltött tornák: {len(tours)}")
         else:
-            raise ValueError("No tournaments from robust fetching")
+            logger.warning("Nem található torna TippmixPro-ban")
+            return {}
     except Exception as e:
-        logger.warning(f"Robust fetching failed: {e}, falling back to tournaments.json")
-        # Fallback to tournaments.json
-        tournaments_path=Path("tournaments.json")
-        if not tournaments_path.exists():
-            logger.warning("tournaments.json hiányzik – Tippmix integráció korlátozott.")
-            return {}
-        try:
-            tdata=json.loads(tournaments_path.read_text(encoding="utf-8"))
-        except Exception:
-            logger.exception("tournaments.json parse hiba.")
-            return {}
-        if isinstance(tdata,list): tours=tdata
-        else: tours=tdata.get("tournaments", [])
+        logger.error(f"TippmixPro torna lekérés sikertelen: {e}")
+        return {}
     
     # Limit to prevent excessive API calls
     tours=tours[:500]  # Increased from 300 to handle more leagues
@@ -1606,7 +1607,7 @@ async def tippmix_fetch_and_map(days_ahead: int) -> dict:
                 logger.warning(f"Failed to fetch matches for tournament {t.get('name', tid)}: {e}")
                 continue
     
-    logger.info(f"Fetched {len(out)} matches from {len(tours)} tournaments")
+    logger.info(f"TippmixPro-ból betöltött mérkőzések: {len(out)} ({len(tours)} tornából)")
     return {str(m.get("id")):m for m in out}
 
 # =========================================================
@@ -3530,7 +3531,9 @@ async def run_pipeline(fetch: bool, analyze: bool,
                 fixture_objs=matched
                 tippmix_mapping=mapping_api_to_tip
             else:
-                logger.info("TippmixPro integráció kikapcsolva (USE_TIPPMIX=0).")
+                logger.warning("TippmixPro integráció kikapcsolva (USE_TIPPMIX=0) – TELJES RENDSZER KIZÁRÓLAG TIPPMIXPRO ALAPON MŰKÖDIK!")
+                logger.warning("Nincs feldolgozandó mérkőzés TippmixPro integráció nélkül.")
+                fixture_objs=[]
             filtered=[]
             for fx in fixture_objs:
                 status=fx.get("fixture",{}).get("status",{}).get("short")
@@ -3734,9 +3737,9 @@ class TelegramBot:
             lines.append("")
             lines.append(f"🎯 TOP_MODE: {TOP_MODE}")
             
-            # TOP liga információk tournaments.json-ból
+            # TOP liga információk hardcoded listából
             top_data = LEAGUE_MANAGER.top_league_data
-            lines.append(f"🌟 TOP ligák (tournaments.json): {top_data['count']} név")
+            lines.append(f"🌟 TOP ligák (hardcoded): {top_data['count']} név")
             
             if top_data['names']:
                 lines.append("")
