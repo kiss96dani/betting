@@ -3698,21 +3698,27 @@ class TelegramBot:
         args = parts[1:]
         if cmd in ("/help","/start"):
             await self.send(
-                "Parancsok:\n"
-                "/run | /run 1 | /run ids <idk>\n"
-                "/ticket (/szelveny)\n"
-                "/status\n"
-                "/picks\n"
-                "/limit <n>\n"
-                "/setdays <n>\n"
-                "/cleanup\n"
-                "/refresh_tickets\n"
-                "/dailyreport\n"
-                "/mode <top_only|hybrid|all>\n"
+                "🤖 **BETTING BOT PARANCSOK**\n\n"
+                "🚀 **Fő funkciók:**\n"
+                "/run - Teljes workflow: TippmixPro scraping + API-Football + elemzés + eredmények\n"
+                "/run 1 - 1 napra előre\n"
+                "/run ids <id1> <id2> - Konkrét meccsek\n\n"
+                "📊 **Eredmények:**\n"
+                "/ticket (/szelveny) - Mai tippek részletesen\n"
+                "/status - Utolsó futás állapota\n"
+                "/picks - Pick lista\n\n"
+                "⚙️ **Beállítások:**\n"
+                "/limit <n> - Meccs limit\n"
+                "/setdays <n> - Napok előre\n"
+                "/mode <top_only|hybrid|all> - Liga szűrés\n\n"
+                "🔧 **Karbantartás:**\n"
+                "/cleanup - Régi fájlok törlése\n"
+                "/refresh_tickets - Ticket frissítés\n"
+                "/dailyreport - Napi riport\n"
                 "/tiers | /leagues <minta> | /reloadtiers\n"
                 "/updatecal | /retraincal | /exportbayes\n"
-                "/tippmixstats\n"
-                "/stop", chat_id)
+                "/tippmixstats - TippmixPro statisztikák\n\n"
+                "/stop - Bot leállítása", chat_id)
         elif cmd == "/mode":
             if args and args[0] in ("top_only","hybrid","all"):
                 global TOP_MODE
@@ -4156,6 +4162,14 @@ class TelegramBot:
         tickets=select_best_tickets(analyzed_res, only_today=TICKET_ONLY_TODAY)
         if tickets: save_ticket_full_analysis(tickets, DATA_ROOT)
         
+        # Provide user feedback on results
+        if not analyzed_res:
+            await self.send("⚠️ Nincs elemezhető meccs találva", chat_id)
+        elif not picks:
+            await self.send("⚠️ Nincs megfelelő tipp találva a kritériumok alapján", chat_id)
+        else:
+            await self.send(f"✅ {len(picks)} tipp kiválasztva {len(analyzed_res)} meccsből", chat_id)
+        
         # Generate comprehensive statistics
         if analyzed_res:
             stats_path = DATA_ROOT / f"comprehensive_stats_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
@@ -4195,7 +4209,14 @@ class TelegramBot:
         analyzed_results = summary.get("analyzed_results", [])
         
         if not picks:
-            await self.send("🚫 Nincs tipp a mai napra", chat_id)
+            await self.send(
+                "🚫 **NINCS TIPP A MAI NAPRA**\n\n"
+                f"📊 Elemzett meccs: {summary.get('analyzed_count', 0)}\n"
+                f"🕷️ TippmixPro meccs: {len(summary.get('tippmix_data', {}).get('matches', {}))}\n"
+                f"🔗 Párosított: {len(summary.get('tippmix_mapping', {}))}\n\n"
+                "ℹ️ Próbáld később vagy módosítsd a beállításokat (/mode, /limit)", 
+                chat_id
+            )
             return
         
         # Group picks by market type for better organization
