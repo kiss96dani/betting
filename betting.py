@@ -3965,24 +3965,31 @@ class TelegramBot:
                     fixture_ids=fids
                 elif args[0].isdigit():
                     days_override=int(args[0])
-            await self.send(f"Futás indult (fetch+analyze) TOP_MODE={TOP_MODE} USE_TIPPMIX={USE_TIPPMIX}...", chat_id)
+            
+            # Step 1: Initial notification
+            await self.send(
+                f"🚀 Teljes workflow indítása...\n"
+                f"📊 TOP_MODE={TOP_MODE} | USE_TIPPMIX={USE_TIPPMIX}\n"
+                f"📅 Napok előre: {days_override or GLOBAL_RUNTIME['fetch_days_ahead']}", 
+                chat_id
+            )
+            
             try:
-                summary = await run_pipeline(
-                    fetch=True,
-                    analyze=True,
+                # Step 2: Start enhanced pipeline with progress reporting
+                summary = await self._run_enhanced_pipeline(
                     fixture_ids=fixture_ids,
-                    limit=self.runtime["fixture_limit"],
-                    cleanup_stale=False,
-                    refetch_missing=False,
-                    days_ahead_override=days_override
+                    days_override=days_override,
+                    chat_id=chat_id
                 )
+                
                 self.runtime["last_summary"] = summary
-                await self.send(
-                    f"Kész: fetched={len(summary['fetched'])} analyzed={summary['analyzed_count']} "
-                    f"picks={summary['picks_count']} TOP_MODE={TOP_MODE}", chat_id)
+                
+                # Step 5: Send final enhanced results
+                await self._send_enhanced_results(summary, chat_id)
+                
             except Exception as e:
                 logger.exception("Run hiba (telegram)")
-                await self.send(f"Hiba: {e}", chat_id)
+                await self.send(f"❌ Hiba történt: {e}", chat_id)
 
         elif cmd == "/stop":
             await self.send("Leállítás kérve – viszlát!", chat_id)
@@ -3990,6 +3997,329 @@ class TelegramBot:
 
         else:
             await self.send("Ismeretlen parancs. /help", chat_id)
+
+    async def _run_enhanced_pipeline(self, fixture_ids=None, days_override=None, chat_id=None):
+        """Enhanced pipeline with step-by-step progress reporting and data persistence"""
+        
+        # Step 1: TippmixPro data scraping
+        await self.send("🕷️ 1) TippmixPro scraping indítása...", chat_id)
+        
+        # Custom enhanced run_pipeline with progress reporting
+        load_state()
+        new_fetched=[]; analyzed_res=[]; picks=[]
+        days_ahead = days_override if days_override is not None else GLOBAL_RUNTIME["fetch_days_ahead"]
+        enhanced_tools={}
+        
+        if ENABLE_ENHANCED_MODELING:
+            logger.info("Enhanced ON (Cal=%s Bayes=%s MC=%s)", ENABLE_CALIBRATION, ENABLE_BAYES, ENABLE_MC)
+            if ENABLE_CALIBRATION:
+                enhanced_tools["calibrators"]=init_calibrators(Path(CALIBRATION_HISTORY_FILE))
+            if ENABLE_BAYES:
+                bayes_model=BayesianAttackDefense()
+                hist_matches=gather_bayes_history(DATA_ROOT, BAYES_HISTORY_DAYS)
+                bayes_model.fit(hist_matches)
+                enhanced_tools["bayes_model"]=bayes_model
+        
+        tippmix_mapping={}
+        tippmix_odds_cache={}
+        tippmix_data = {}
+        
+        # Fetch and save TippmixPro data
+        async with APIFootballClient(API_KEY, API_BASE) as client:
+            if fixture_ids:
+                fixture_objs=[]
+                for fid in fixture_ids:
+                    js=await client.get("/fixtures", {"id": fid})
+                    resp=js.get("response") or []
+                    if resp: fixture_objs.append(resp[0])
+            else:
+                fixture_objs=await fetch_upcoming_fixtures(client, days_ahead)
+            
+            await self.send(f"📊 API-Football: {len(fixture_objs)} meccs találva", chat_id)
+            
+            if USE_TIPPMIX:
+                await self.send("🎯 TippmixPro meccsek párosítása...", chat_id)
+                tipp_matches=await tippmix_fetch_and_map(TIPPMIX_DAYS_AHEAD)
+                await self.send(f"✅ TippmixPro: {len(tipp_matches)} meccs letöltve", chat_id)
+                
+                # Save TippmixPro data to JSON
+                tippmix_file = DATA_ROOT / f"tippmix_data_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
+                tippmix_data = {
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "matches_count": len(tipp_matches),
+                    "matches": tipp_matches,
+                    "metadata": {
+                        "days_ahead": TIPPMIX_DAYS_AHEAD,
+                        "market_group": TIPPMIX_MARKET_GROUP,
+                        "similarity_threshold": TIPPMIX_SIMILARITY_THRESHOLD,
+                        "time_tolerance_min": TIPPMIX_TIME_TOLERANCE_MIN
+                    }
+                }
+                safe_write_json(tippmix_file, tippmix_data)
+                
+                # Match pairing logic
+                tip_index=[]
+                for tm in tipp_matches.values():
+                    home=tm.get("homeParticipantName") or ""
+                    away=tm.get("awayParticipantName") or ""
+                    start_ms=tm.get("startTime")
+                    tip_index.append({
+                        "match_id": tm.get("id"),
+                        "home_n": normalize_team_name(home),
+                        "away_n": normalize_team_name(away),
+                        "start_ms": start_ms,
+                        "raw": tm
+                    })
+                matched=[]; mapping_api_to_tip={}
+                for fx in fixture_objs:
+                    fixture=fx.get("fixture",{}) or {}
+                    teams=fx.get("teams",{}) or {}
+                    fid=fixture.get("id"); ts=fixture.get("timestamp")
+                    if not (fid and ts and teams.get("home") and teams.get("away")): continue
+                    home_name=teams["home"].get("name","")
+                    away_name=teams["away"].get("name","")
+                    hn=normalize_team_name(home_name)
+                    an=normalize_team_name(away_name)
+                    ts_ms=ts*1000
+                    best=None; best_score=0
+                    for tm in tip_index:
+                        if tm["start_ms"] is None: continue
+                        if abs(tm["start_ms"] - ts_ms) > TIPPMIX_TIME_TOLERANCE_MIN*60*1000: continue
+                        sim_home=similarity(hn, tm["home_n"])
+                        sim_away=similarity(an, tm["away_n"])
+                        sim=(sim_home+sim_away)/2
+                        if sim>best_score:
+                            best_score=sim; best=tm
+                    if best and best_score>=TIPPMIX_SIMILARITY_THRESHOLD:
+                        mapping_api_to_tip[fid]=best["match_id"]
+                        matched.append(fx)
+                
+                await self.send(f"🔗 Párosított meccsek: {len(matched)}/{len(fixture_objs)}", chat_id)
+                fixture_objs=matched
+                tippmix_mapping=mapping_api_to_tip
+            else:
+                await self.send("⚠️ TippmixPro integráció kikapcsolva", chat_id)
+            
+            # Step 2: API-Football data fetching
+            await self.send("📥 2) API-Football adatok letöltése...", chat_id)
+            
+            filtered=[]
+            for fx in fixture_objs:
+                status=fx.get("fixture",{}).get("status",{}).get("short")
+                if status in ("NS","TBD","PST","CANC","SUSP"):
+                    filtered.append(fx)
+            if self.runtime["fixture_limit"]>0 and len(filtered)>self.runtime["fixture_limit"]:
+                filtered=filtered[:self.runtime["fixture_limit"]]
+            
+            await self.send(f"📦 Feldolgozandó meccsek: {len(filtered)}", chat_id)
+            
+            tasks=[asyncio.create_task(fetch_fixture_bundle(client, fx, DATA_ROOT)) for fx in filtered]
+            if tasks: await asyncio.gather(*tasks)
+            new_fetched=[fx.get("fixture",{}).get("id") for fx in filtered if fx.get("fixture",{}).get("id")]
+            
+            # Fetch TippmixPro odds
+            if USE_TIPPMIX and tippmix_mapping:
+                await self.send("💰 TippmixPro odds letöltése...", chat_id)
+                extractor=TippmixOddsExtractor()
+                async with TippmixProWampClient(verbose=False) as cli:
+                    for api_fid, tip_mid in tippmix_mapping.items():
+                        recs=await cli.fetch_match_markets_group(tip_mid, TIPPMIX_MARKET_GROUP)
+                        std=extractor.extract(recs)
+                        tippmix_odds_cache[api_fid]=std
+                        await asyncio.sleep(0.05)
+                GLOBAL_RUNTIME["tippmix_mapping"]=tippmix_mapping
+                GLOBAL_RUNTIME["tippmix_odds_cache"]=tippmix_odds_cache
+            else:
+                GLOBAL_RUNTIME["tippmix_mapping"]={}
+                GLOBAL_RUNTIME["tippmix_odds_cache"]={}
+        
+        # Step 3: Statistical analysis
+        await self.send("📊 3) Statisztikai elemzés indítása...", chat_id)
+        
+        targets=[int(p.name.split("_")[-1]) for p in DATA_ROOT.glob("out_fixture_*") if (p/"summary.json").exists()]
+        valid=[fid for fid in targets if (DATA_ROOT/f"out_fixture_{fid}"/"summary.json").exists()]
+        
+        await self.send(f"🔍 Elemzendő meccsek: {len(valid)}", chat_id)
+        
+        for idx,fid in enumerate(valid,1):
+            res=analyze_fixture(DATA_ROOT, fid, enhanced_tools)
+            if res: analyzed_res.append(res)
+            # Progress update every 20 matches
+            if idx%20==0:
+                await self.send(f"📈 Elemzés: {idx}/{len(valid)} kész", chat_id)
+        
+        # Step 4: Best tips calculation and pairing with TippmixPro odds
+        await self.send("🎯 4) Legjobb tippek kiválasztása és odds párosítása...", chat_id)
+        
+        picks=allocate_stakes(analyzed_res)
+        register_picks(picks)
+        tickets=select_best_tickets(analyzed_res, only_today=TICKET_ONLY_TODAY)
+        if tickets: save_ticket_full_analysis(tickets, DATA_ROOT)
+        
+        # Generate comprehensive statistics
+        if analyzed_res:
+            stats_path = DATA_ROOT / f"comprehensive_stats_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
+            generate_comprehensive_stats(analyzed_res, stats_path)
+        
+        RUNTIME_STATE["last_run"]=datetime.now(timezone.utc).isoformat()
+        save_state()
+        
+        summary={
+            "fetched": new_fetched,
+            "analyzed_count": len(analyzed_res),
+            "analyzed_results": analyzed_res,
+            "picks_count": len(picks),
+            "picks": picks,
+            "tickets": tickets,
+            "top_mode": TOP_MODE,
+            "use_tippmix": USE_TIPPMIX,
+            "tippmix_data": tippmix_data,
+            "tippmix_mapping": tippmix_mapping,
+            "tippmix_odds_cache": tippmix_odds_cache
+        }
+        
+        picks_file=DATA_ROOT / f"picks_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
+        safe_write_json(picks_file, summary)
+        GLOBAL_RUNTIME["last_summary"]=summary
+        GLOBAL_RUNTIME["last_picks_file"]=picks_file.name
+        
+        await self.send("✅ Workflow befejezve!", chat_id)
+        
+        return summary
+
+    async def _send_enhanced_results(self, summary, chat_id):
+        """Send comprehensive results with match details, odds, and statistical indicators"""
+        
+        picks = summary.get("picks", [])
+        tippmix_odds_cache = summary.get("tippmix_odds_cache", {})
+        analyzed_results = summary.get("analyzed_results", [])
+        
+        if not picks:
+            await self.send("🚫 Nincs tipp a mai napra", chat_id)
+            return
+        
+        # Group picks by market type for better organization
+        picks_by_market = {"1X2": [], "BTTS": [], "O/U 2.5": []}
+        
+        for pick in picks[:10]:  # Limit to top 10 picks
+            market = pick.get("market", "")
+            if "1x2" in market.lower():
+                picks_by_market["1X2"].append(pick)
+            elif "btts" in market.lower():
+                picks_by_market["BTTS"].append(pick)
+            elif "over" in market.lower() or "under" in market.lower():
+                picks_by_market["O/U 2.5"].append(pick)
+        
+        # Send results by market type
+        for market_name, market_picks in picks_by_market.items():
+            if not market_picks:
+                continue
+                
+            messages = []
+            messages.append(f"🎯 **{market_name} TIPPEK**")
+            messages.append("═" * 25)
+            
+            for i, pick in enumerate(market_picks[:3], 1):  # Max 3 per market
+                fid = pick.get("fixture_id")
+                
+                # Get match details from analyzed results
+                match_info = next((r for r in analyzed_results if r.get("fixture_id") == fid), {})
+                
+                # Extract match information
+                teams = match_info.get("teams", {})
+                home_name = teams.get("home", {}).get("name", "?")
+                away_name = teams.get("away", {}).get("name", "?")
+                
+                fixture_data = match_info.get("fixture", {})
+                match_time = fixture_data.get("date", "")
+                if match_time:
+                    try:
+                        dt = datetime.fromisoformat(match_time.replace('Z', '+00:00'))
+                        match_time = dt.strftime("%m/%d %H:%M")
+                    except:
+                        match_time = "TBD"
+                
+                league_info = match_info.get("league", {})
+                league_name = league_info.get("name", "")
+                league_tier = pick.get("league_tier", "")
+                
+                # Get TippmixPro odds if available
+                tippmix_odds = tippmix_odds_cache.get(str(fid))
+                odds_text = ""
+                if tippmix_odds:
+                    if market_name == "1X2" and tippmix_odds.one_x_two:
+                        odds_text = f"(TM: {tippmix_odds.one_x_two.get('home', 'N/A')}-{tippmix_odds.one_x_two.get('draw', 'N/A')}-{tippmix_odds.one_x_two.get('away', 'N/A')})"
+                    elif market_name == "BTTS" and tippmix_odds.btts:
+                        odds_text = f"(TM: I:{tippmix_odds.btts.get('YES', 'N/A')} N:{tippmix_odds.btts.get('NO', 'N/A')})"
+                    elif market_name == "O/U 2.5" and tippmix_odds.ou25:
+                        odds_text = f"(TM: O:{tippmix_odds.ou25.get('OVER', 'N/A')} U:{tippmix_odds.ou25.get('UNDER', 'N/A')})"
+                
+                # Statistical indicators
+                edge = pick.get("edge", 0)
+                confidence = "🟢 Magas" if edge >= 0.15 else "🟡 Közepes" if edge >= 0.08 else "🔴 Alacsony"
+                
+                # Format selection in Hungarian
+                selection = pick.get("selection", "")
+                selection_hu = selection
+                if "home" in selection.lower():
+                    selection_hu = "Hazai"
+                elif "away" in selection.lower():
+                    selection_hu = "Vendég"
+                elif "draw" in selection.lower():
+                    selection_hu = "Döntetlen"
+                elif selection.upper() == "YES":
+                    selection_hu = "Igen"
+                elif selection.upper() == "NO":
+                    selection_hu = "Nem"
+                elif "OVER" in selection.upper():
+                    selection_hu = "Felett"
+                elif "UNDER" in selection.upper():
+                    selection_hu = "Alatt"
+                
+                # Tier emoji
+                tier_emoji = "🌟" if league_tier == "TOP" else "⚪"
+                
+                message_parts = [
+                    f"{i}. **{home_name} vs {away_name}**",
+                    f"🕐 {match_time} | {tier_emoji} {league_name}",
+                    f"🎯 {selection_hu} @ {pick.get('odds', 'N/A')} {odds_text}",
+                    f"💰 Tét: {pick.get('stake', 0):.2f} | Edge: {edge:.1%}",
+                    f"📊 {confidence}",
+                    ""
+                ]
+                
+                messages.extend(message_parts)
+            
+            # Send this market's results
+            market_message = "\n".join(messages)
+            if len(market_message) > 4000:  # Telegram message limit
+                # Split into smaller messages
+                parts = market_message.split("\n\n")
+                current_msg = ""
+                for part in parts:
+                    if len(current_msg + part) > 3800:
+                        await self.send(current_msg, chat_id)
+                        current_msg = part
+                    else:
+                        current_msg += "\n\n" + part if current_msg else part
+                if current_msg:
+                    await self.send(current_msg, chat_id)
+            else:
+                await self.send(market_message, chat_id)
+        
+        # Send overall summary
+        summary_msg = [
+            "📊 **ÖSSZEGZÉS**",
+            "═" * 20,
+            f"🎯 Összes tipp: {len(picks)}",
+            f"📈 Elemzett meccs: {summary.get('analyzed_count', 0)}",
+            f"🕷️ TippmixPro meccs: {len(summary.get('tippmix_data', {}).get('matches', {}))}",
+            f"🔗 Párosított: {len(summary.get('tippmix_mapping', {}))}",
+            f"🏆 TOP ligák: {TOP_MODE}",
+            f"💎 TippmixPro: {'✅' if USE_TIPPMIX else '❌'}"
+        ]
+        
+        await self.send("\n".join(summary_msg), chat_id)
 
 
 # =========================================================
