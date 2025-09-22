@@ -11,6 +11,7 @@ from math import exp, factorial
 from zoneinfo import ZoneInfo
 from aiohttp import ClientTimeout
 import concurrent.futures
+from PIL import ImageFilter
 
 # ================= LOGGING =================
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -170,6 +171,546 @@ try:
     HAVE_MATPLOTLIB = True
 except ImportError:
     HAVE_MATPLOTLIB = False
+# ===== (ÚJ) Opcionális: Pillow képgeneráláshoz =====
+try:
+    from PIL import Image, ImageDraw, ImageFont, ImageFilter
+    HAVE_PIL = True
+except ImportError:
+    HAVE_PIL = False
+
+# --- ÚJ segédek: chip-méret és középre igazított chip rajz ---
+def _chip_size(draw, text: str, font, pad_x=12, pad_y=6) -> tuple[int, int]:
+    tw, th = _textsize(draw, text, font)
+    return int(tw + 2 * pad_x), int(th + 2 * pad_y)
+
+def _draw_chip_centered(draw, x_left: int, center_y: int, text: str, bg_rgb: tuple[int,int,int],
+                        font, pad_x=12, pad_y=6, radius=12) -> int:
+    tw, th = _textsize(draw, text, font)
+    w = int(tw + 2 * pad_x)
+    h = int(th + 2 * pad_y)
+    x1 = x_left
+    y1 = int(center_y - h / 2)
+    x2 = x1 + w
+    y2 = y1 + h
+    _rounded_rectangle(draw, [(x1, y1), (x2, y2)], radius=radius, fill=bg_rgb)
+    cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+    try:
+        draw.text((cx, cy), text, fill=_hex_to_rgb("#0B1220"), font=font, anchor="mm")
+    except TypeError:
+        draw.text((int(cx - tw/2), int(cy - th/2)), text, fill=_hex_to_rgb("#0B1220"), font=font)
+    return w  # visszaadjuk a chip teljes szélességét
+
+# --- ÚJ segéd: vékony progress bar a Piac-erőhöz ---
+def _draw_progress(draw, x: int, y: int, w: int, h: int, pct: float,
+                   fg_rgb: tuple[int,int,int], bg_rgb: tuple[int,int,int], radius: int = 6):
+    pct_clamped = max(0.0, min(100.0, float(pct)))
+    _rounded_rectangle(draw, [(x, y), (x + w, y + h)], radius=radius, fill=bg_rgb)
+    fill_w = int(round(w * (pct_clamped / 100.0)))
+    if fill_w > 0:
+        _rounded_rectangle(draw, [(x, y), (x + fill_w, y + h)], radius=radius, fill=fg_rgb)
+
+def _draw_shadowed_roundrect(base_img, xy, radius=20, shadow_alpha=120, blur=16, offset=(0, 2)):
+    """
+    Finom, elcsúsztatott árnyék rajzolása rounded rect mögé.
+    base_img: RGBA Image
+    """
+    if base_img.mode != "RGBA":
+        base_img = base_img.convert("RGBA")
+    shadow = Image.new("RGBA", base_img.size, (0, 0, 0, 0))
+    sdraw = ImageDraw.Draw(shadow)
+    (x1, y1), (x2, y2) = xy
+    dx, dy = offset
+    rect = [(x1 + dx, y1 + dy), (x2 + dx, y2 + dy)]
+    if hasattr(sdraw, "rounded_rectangle"):
+        sdraw.rounded_rectangle(rect, radius=radius, fill=(0, 0, 0, shadow_alpha))
+    else:
+        sdraw.rectangle(rect, fill=(0, 0, 0, shadow_alpha))
+    shadow = shadow.filter(ImageFilter.GaussianBlur(blur))
+    base_img.alpha_composite(shadow)
+
+# ===== (ÚJ) Szövegméret és rounded rectangle kompat segédek =====
+def _textsize(draw, text: str, font) -> tuple[float, float]:
+    """
+    Biztonságos szövegméret számítás bármely Pillow verzióhoz.
+    Először textbbox, majd font.getbbox, végül becslés.
+    """
+    try:
+        bbox = draw.textbbox((0, 0), text, font=font)
+        return float(bbox[2] - bbox[0]), float(bbox[3] - bbox[1])
+    except Exception:
+        try:
+            bbox = font.getbbox(text)
+            return float(bbox[2] - bbox[0]), float(bbox[3] - bbox[1])
+        except Exception:
+            try:
+                size = getattr(font, "size", 28)
+            except Exception:
+                size = 28
+            return (len(text) * size * 0.6, float(size))
+
+def _rounded_rectangle(draw, xy, radius: int, fill):
+    """
+    Rounded rectangle fallback: ha a Pillow nem tud rounded_rectangle-t, sima rectangle-t rajzol.
+    """
+    if hasattr(draw, "rounded_rectangle"):
+        draw.rounded_rectangle(xy, radius=radius, fill=fill)
+    else:
+        draw.rectangle(xy, fill=fill)
+
+# Segédek a kép-generátor közelében (pl. _rounded_rectangle után)
+def _luminance(rgb: tuple[int,int,int]) -> float:
+    r,g,b = [c/255.0 for c in rgb]
+    def lc(u): 
+        return (u/12.92) if (u <= 0.03928) else (((u+0.055)/1.055)**2.4)
+    R,G,B = lc(r), lc(g), lc(b)
+    return 0.2126*R + 0.7152*G + 0.0722*B
+
+def _best_text_color(bg_rgb: tuple[int,int,int]) -> tuple[int,int,int]:
+    # Ha a háttér sötét → fehér szöveg, ha világos → sötét szöveg
+    return _hex_to_rgb("#F8FAFC") if _luminance(bg_rgb) < 0.5 else _hex_to_rgb("#0B1220")
+
+def _fmt_pct_hu(edge: float) -> str:
+    # +50,2% formátum
+    s = f"{abs(edge)*100:.1f}".replace(".", ",")
+    sign = "+" if edge >= 0 else "−"
+    return f"{sign}{s}%"
+
+def _draw_badge(draw, x_right: int, y_center: int, text: str, bg_rgb: tuple[int,int,int],
+                font, pad_x: int = 14, pad_y: int = 6, radius: int = 12,
+                center_plus: bool = False):
+    """
+    Jobb szélhez igazított kapszula (badge).
+    - center_plus=True esetén a jel (+/−) lesz a kapszula geometriai közepén.
+      Ilyenkor a kapszula a bal irányba szélesedik (a jobb széle változatlan).
+    """
+    # Teljes szöveg méret
+    tw, th = _textsize(draw, text, font)
+    h = int(th + 2 * pad_y)
+
+    if not center_plus:
+        # Klasszikus: a teljes szöveg középre a kapszulán belül
+        width = int(tw + 2 * pad_x)
+        bx2 = x_right
+        bx1 = bx2 - width
+        by1 = int(y_center - h / 2)
+        by2 = by1 + h
+        _rounded_rectangle(draw, [(bx1, by1), (bx2, by2)], radius=radius, fill=bg_rgb)
+        cx = (bx1 + bx2) // 2
+        cy = (by1 + by2) // 2
+        try:
+            draw.text((cx, cy), text, fill=_best_text_color(bg_rgb), font=font, anchor="mm")
+        except TypeError:
+            # Fallback, ha az anchor nem támogatott
+            draw.text((int(cx - tw / 2), int(cy - th / 2)), text, fill=_best_text_color(bg_rgb), font=font)
+        return
+
+    # center_plus: a jel legyen középen
+    sign = text[0] if text else "+"
+    sw, _ = _textsize(draw, sign, font)
+    rest_w = max(0.0, tw - sw)
+
+    # A kapszula szélessége úgy, hogy a jobb széle fix maradjon,
+    # és a jel közepe essen a kapszula közepére.
+    # Ekkor a minimális jobb oldali padding pad_x, a bal oldali padding pedig nagyobb lesz.
+    # Matematikailag: width = 2*pad_x + (2*tw - sw) = tw + 2*pad_x + rest_w
+    width = int(2 * pad_x + (2 * tw - sw))
+    bx2 = x_right
+    bx1 = bx2 - width
+    by1 = int(y_center - h / 2)
+    by2 = by1 + h
+
+    _rounded_rectangle(draw, [(bx1, by1), (bx2, by2)], radius=radius, fill=bg_rgb)
+
+    # A kapszula közepe
+    cx = (bx1 + bx2) // 2
+    cy = (by1 + by2) // 2
+
+    # A szöveget bal-közép horgonyzással úgy rajzoljuk, hogy a jel közepe pont a kapszula közepe legyen.
+    # Bal kezdő x: jel közepe (cx) mínusz fél jel-szélesség
+    x_text_left = int(cx - sw / 2)
+    try:
+        draw.text((x_text_left, cy), text, fill=_best_text_color(bg_rgb), font=font, anchor="lm")
+    except TypeError:
+        # Fallback: top-left horgonyzással, kézi y-korrekció
+        draw.text((x_text_left, int(cy - th / 2)), text, fill=_best_text_color(bg_rgb), font=font)
+
+# ===== (ÚJ) Szelvénykártya kép generálása (PNG bájtok) =====
+def _hex_to_rgb(h: str) -> tuple[int, int, int]:
+    h = h.lstrip("#")
+    return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+
+def _try_load_font(candidates: list[tuple[str,int]], fallback_size: int=28):
+    # Próbálkozik rendszerfontokkal; ha nincs, PIL default
+    if not HAVE_PIL:
+        return None
+    for path, size in candidates:
+        try:
+            return ImageFont.truetype(path, size)
+        except Exception:
+            continue
+    try:
+        return ImageFont.load_default()
+    except Exception:
+        return None
+
+def _confidence_from_edge(edge: float) -> str:
+    if edge >= 0.15: return "Magas"
+    if edge >= 0.08: return "Közepes"
+    return "Alacsony"
+
+def _draw_chip(draw, x_left: int, y_top: int, text: str, bg_rgb: tuple[int,int,int], font, pad_x=12, pad_y=6, radius=12):
+    """
+    Színes kapszula (chip) szöveggel. Visszaadja a chip szélességét.
+    """
+    tw, th = _textsize(draw, text, font)
+    w = int(tw + 2 * pad_x)
+    h = int(th + 2 * pad_y)
+    x1, y1, x2, y2 = x_left, y_top, x_left + w, y_top + h
+    _rounded_rectangle(draw, [(x1, y1), (x2, y2)], radius=radius, fill=bg_rgb)
+    cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+    try:
+        draw.text((cx, cy), text, fill=_hex_to_rgb("#0B1220"), font=font, anchor="mm")
+    except TypeError:
+        draw.text((int(cx - tw/2), int(cy - th/2)), text, fill=_hex_to_rgb("#0B1220"), font=font)
+    return w
+
+# ===== (MÓDOSÍTÁS) generate_ticket_card – textsize → _textsize, rounded_rectangle → _rounded_rectangle =====
+def generate_ticket_card(
+    tickets: dict,
+    title: str = "Szelvény",
+    tz_label: str = LOCAL_TZ,
+    logo_path: str | None = None,
+    logo_max_height: int = 64,
+    variant: str = "glass",          # "classic" | "glass"
+    show_market_tag: bool = True,    # market chip
+    show_header_rule: bool = True,   # fejléc alatti vékony vonal
+    watermark_mode: str = "global",  # "global" | "per-card" | "none"
+    watermark_opacity: float = 0.10, # 0.0–1.0
+    watermark_scale: float = 1.12,   # global-diagonal: a vászon átlójának aránya
+    watermark_angle: float | None = 45.0  # None => sarokba, szám => ennyi fokkal, középre igazítva
+) -> bytes:
+    """
+    PNG szelvénykép generálása dizájn opciókkal.
+    - watermark_mode:
+        - global: nagy vízjel az egész képen (ha watermark_angle meg van adva, középre téve és elforgatva)
+        - per-card: minden kártya jobb-alsó részébe kicsi vízjel
+        - none: nincs vízjel
+    """
+    if not HAVE_PIL:
+        raise RuntimeError("Pillow (PIL) nincs telepítve. Telepítés: pip install Pillow")
+
+    from PIL import ImageOps, ImageFilter
+    import io, math
+
+    # --- Logó betöltés + fekete háttér auto-crop + RGBA előkészítés ---
+    def _load_logo_rgba(path: str) -> Image.Image | None:
+        try:
+            base = Image.open(path).convert("RGB")
+        except Exception as e:
+            logger.warning("Logó betöltési hiba (%s): %s", path, e)
+            return None
+        gray = base.convert("L")
+        mask = gray.point(lambda p: 255 if p > 24 else 0).convert("L")
+        bbox = mask.getbbox()
+        if bbox:
+            base = base.crop(bbox)
+            mask = mask.crop(bbox)
+        mask = ImageOps.autocontrast(mask, cutoff=2)
+        rgba = Image.new("RGBA", base.size, (255, 255, 255, 0))
+        rgba.paste(base, (0, 0), mask)
+        return rgba
+
+    # --- Fehérre színezett, adott opacitású watermark példány készítése és méretezése ---
+    def _make_watermark_instance(logo_rgba: Image.Image, target_w: int, opacity: float) -> Image.Image:
+        if target_w <= 0:
+            target_w = 1
+        w, h = logo_rgba.size
+        ratio = target_w / max(1, w)
+        new_size = (target_w, max(1, int(h * ratio)))
+        wm = logo_rgba.resize(new_size, Image.LANCZOS)
+        # fehérre színezés (tint) + opacitás
+        r, g, b, a = wm.split()
+        alpha = a.point(lambda p: int(p * max(0.0, min(1.0, opacity))))
+        solid = Image.new("RGBA", wm.size, (255, 255, 255, 255))
+        solid.putalpha(alpha)
+        return solid
+
+    # --- Per-kártya vízjel a kártya jobb-alsó sarkába, margóval ---
+    def _draw_card_watermark(canvas: Image.Image, rect: tuple[tuple[int,int], tuple[int,int]],
+                             logo_rgba: Image.Image, rel_scale: float, opacity: float, margin: int = 20):
+        (x1, y1), (x2, y2) = rect
+        card_w = max(1, x2 - x1)
+        target_w = max(16, int(card_w * max(0.08, min(0.5, rel_scale))))
+        wm = _make_watermark_instance(logo_rgba, target_w, opacity)
+        dest_x = x2 - wm.width - margin
+        dest_y = y2 - wm.height - margin
+        dest_x = max(x1 + margin, dest_x)
+        dest_y = max(y1 + margin, dest_y)
+        canvas.alpha_composite(wm, dest=(dest_x, dest_y))
+
+    # --- Globál vízjel ---
+    def _draw_global_watermark(canvas: Image.Image, logo_rgba: Image.Image,
+                               canvas_w: int, canvas_h: int, rel_scale: float, opacity: float,
+                               pad: int = 48, bottom_offset: int = 120, angle: float | None = None):
+        if angle is None:
+            # Sarokba helyezett (régi viselkedés)
+            target_w = max(48, int(canvas_w * max(0.12, min(0.6, rel_scale))))
+            wm = _make_watermark_instance(logo_rgba, target_w, opacity)
+            dest_x = canvas_w - pad - wm.width
+            dest_y = canvas_h - bottom_offset - wm.height
+            dest_x = max(pad, dest_x)
+            dest_y = max(pad, dest_y)
+            canvas.alpha_composite(wm, dest=(dest_x, dest_y))
+        else:
+            # Középre igazított, elforgatott (pl. 45°) vízjel – a vászon átlójára méretezve
+            diag = int(math.hypot(canvas_w, canvas_h))
+            target_w = max(48, int(diag * max(0.5, min(1.6, rel_scale))))
+            wm = _make_watermark_instance(logo_rgba, target_w, opacity)
+            wm_rot = wm.rotate(float(angle), resample=Image.BICUBIC, expand=True)
+            dest_x = (canvas_w - wm_rot.width) // 2
+            dest_y = (canvas_h - wm_rot.height) // 2
+            canvas.alpha_composite(wm_rot, dest=(dest_x, dest_y))
+
+    # --- Vászon RGBA ---
+    W, H = 1080, 1350
+    bg = Image.new("RGBA", (W, H), (*_hex_to_rgb("#0F172A"), 255))
+    draw = ImageDraw.Draw(bg)
+
+    # Színek
+    clr_primary = _hex_to_rgb("#F8FAFC")
+    clr_secondary = _hex_to_rgb("#CBD5E1")
+    clr_card = _hex_to_rgb("#0B1220")
+    clr_card_glass = _hex_to_rgb("#101a2f")
+    clr_good = _hex_to_rgb("#22C55E")
+    clr_bad = _hex_to_rgb("#EF4444")
+    rule_color = _hex_to_rgb("#1E293B")
+    market_colors = {"1X2": _hex_to_rgb("#2563EB"), "BTTS": _hex_to_rgb("#10B981"), "O/U 2.5": _hex_to_rgb("#8B5CF6")}
+
+    # Betűk
+    font_title = _try_load_font([("C:/Windows/Fonts/segoeuib.ttf", 48),
+                                 ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 48)], 48)
+    font_header = _try_load_font([("C:/Windows/Fonts/segoeui.ttf", 30),
+                                  ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 30)], 30)
+    font_market = _try_load_font([("C:/Windows/Fonts/segoeuib.ttf", 34),
+                                  ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 34)], 34)
+    font_text = _try_load_font([("C:/Windows/Fonts/segoeui.ttf", 30),
+                                ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 30)], 30)
+    font_small = _try_load_font([("C:/Windows/Fonts/segoeui.ttf", 26),
+                                 ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 26)], 26)
+    font_badge = _try_load_font([("C:/Windows/Fonts/segoeuib.ttf", 28),
+                                 ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 28)], 28)
+
+    # Fejléc (logó + cím középre igazítva a logóhoz)
+    pad = 48
+    y = pad
+    x_left = pad
+
+    logo_rgba = _load_logo_rgba(logo_path) if logo_path else None
+
+    # Bal felső logó (fejléc)
+    logo_w = logo_h = 0
+    if logo_rgba is not None:
+        w0, h0 = logo_rgba.size
+        ratio = logo_max_height / max(1, h0)
+        logo_w = int(w0 * ratio)
+        logo_h = int(h0 * ratio)
+        header_logo = logo_rgba.resize((logo_w, logo_h), Image.LANCZOS)
+        bg.alpha_composite(header_logo, dest=(x_left, y))
+
+    # Cím a logóhoz középre igazítva
+    title_x = x_left + (logo_w + 16 if logo_w else 0)
+    t_w, t_h = _textsize(draw, title, font_title)
+    logo_center_y = (y + logo_h // 2) if logo_h else (y + t_h // 2)
+    try:
+        draw.text((title_x, logo_center_y), title, fill=clr_primary, font=font_title, anchor="lm")
+        title_bbox = draw.textbbox((title_x, logo_center_y), title, font=font_title, anchor="lm")
+    except TypeError:
+        title_y = int(logo_center_y - t_h / 2)
+        draw.text((title_x, title_y), title, fill=clr_primary, font=font_title)
+        title_bbox = draw.textbbox((title_x, title_y), title, font=font_title)
+
+    # Dátum/idő jobbra
+    hdr = f"{datetime.now(ZoneInfo(tz_label)).strftime('%Y-%m-%d')} · {tz_label}"
+    w_hdr, _ = _textsize(draw, hdr, font_header)
+    hdr_y = title_bbox[1] + 6
+    draw.text((W - pad - w_hdr, hdr_y), hdr, fill=clr_secondary, font=font_header)
+
+    # Fejléc elválasztó
+    y_after_header = max(y + (logo_h if logo_h else 0), title_bbox[3])
+    if show_header_rule:
+        rule_y = y_after_header + 20
+        draw.rectangle([(pad, rule_y), (W - pad, rule_y + 2)], fill=(*rule_color, 180))
+        y = rule_y + 24
+    else:
+        y = y_after_header + 42
+
+    # Kártya rajzoló (lényegi részek változatlanok)
+    def draw_block(y_top: int, market: str, league: str, home: str, away: str,
+                   kickoff: str, tip: str, odds: float, model_pct: float, market_pct: float,
+                   edge: float, strength: float):
+        card_h = 360
+        rect = [(pad, y_top), (W - pad, y_top + card_h)]
+        # háttér + árnyék
+        if variant == "glass":
+            shadow = Image.new("RGBA", bg.size, (0, 0, 0, 0))
+            sdraw = ImageDraw.Draw(shadow)
+            (x1, y1), (x2, y2) = rect
+            dx, dy = (0, 6)
+            rr = [(x1 + dx), (y1 + dy), (x2 + dx), (y2 + dy)]
+            if hasattr(sdraw, "rounded_rectangle"):
+                sdraw.rounded_rectangle(rr, radius=20, fill=(0, 0, 0, 120))
+            else:
+                sdraw.rectangle(rr, fill=(0, 0, 0, 120))
+            shadow = shadow.filter(ImageFilter.GaussianBlur(16))
+            bg.alpha_composite(shadow)
+            _rounded_rectangle(draw, rect, radius=20, fill=clr_card_glass)
+        else:
+            _rounded_rectangle(draw, rect, radius=20, fill=clr_card)
+
+        # bal sáv
+        mc = market_colors.get(market, _hex_to_rgb("#3B82F6"))
+        draw.rectangle([(pad, y_top), (pad + 10, y_top + card_h)], fill=mc)
+
+        x = pad + 24
+        y_line = y_top + 20
+
+        # market chip + liga
+        if show_market_tag:
+            league_bbox = draw.textbbox((x, y_line), league, font=font_market)
+            league_center_y = int((league_bbox[1] + league_bbox[3]) / 2)
+            twc, thc = _textsize(draw, market, font_small)
+            chip_w = int(twc + 2 * 12); chip_h = int(thc + 2 * 6)
+            cx1 = x; cy1 = int(league_center_y - chip_h / 2)
+            _rounded_rectangle(draw, [(cx1, cy1), (cx1 + chip_w, cy1 + chip_h)], radius=12, fill=mc)
+            try:
+                draw.text((cx1 + chip_w // 2, cy1 + chip_h // 2), market, fill=_hex_to_rgb("#0B1220"), font=font_small, anchor="mm")
+            except TypeError:
+                draw.text((cx1 + 12, cy1 + 6), market, fill=_hex_to_rgb("#0B1220"), font=font_small)
+            draw.text((x + chip_w + 12, y_line), league, fill=clr_primary, font=font_market)
+        else:
+            draw.text((x, y_line), f"{market} · {league}", fill=clr_primary, font=font_market)
+
+        # jobb oldalt Piac-erő
+        ms = f"Piac-erő: {strength:.1f}%"
+        w_ms, _ = _textsize(draw, ms, font_small)
+        draw.text((W - pad - 24 - w_ms, y_line + 4), ms, fill=clr_secondary, font=font_small)
+
+        # mérkőzés + idő
+        y_line += 56
+        match_line = f"{home} vs {away}"
+        draw.text((x, y_line), match_line, fill=clr_primary, font=font_text)
+        ko_line = f"{kickoff}"
+        w_ko, _ = _textsize(draw, ko_line, font_small)
+        draw.text((W - pad - 24 - w_ko, y_line + 4), ko_line, fill=clr_secondary, font=font_small)
+
+        # tipp + odds
+        y_line += 54
+        tip_line = f"Tipp: {tip} @ {odds}"
+        draw.text((x, y_line), tip_line, fill=clr_primary, font=font_text)
+
+        # badge közép
+        try:
+            tip_bbox = draw.textbbox((x, y_line), tip_line, font=font_text)
+            line_center_y = int((tip_bbox[1] + tip_bbox[3]) / 2)
+        except Exception:
+            _, tip_h2 = _textsize(draw, tip_line, font_text)
+            line_center_y = int(y_line + tip_h2 / 2)
+
+        badge_text = _fmt_pct_hu(edge)
+        edge_fill = clr_good if edge >= 0 else clr_bad
+        _draw_badge(
+            draw,
+            x_right=W - pad - 24,
+            y_center=line_center_y,
+            text=badge_text,
+            bg_rgb=edge_fill,
+            font=font_badge,
+            center_plus=True  # <- ez igazítja középre a jelet
+        )
+
+        # modell vs piac + bizalom
+        y_line += 56
+        stats_line = f"Modell: {model_pct*100:.1f}% | Piac: {market_pct*100:.1f}%"
+        draw.text((x, y_line), stats_line, fill=clr_secondary, font=font_small)
+        conf = _confidence_from_edge(edge)
+        conf_line = f"Bizalom: {conf}"
+        w_conf, _ = _textsize(draw, conf_line, font_small)
+        draw.text((W - pad - 24 - w_conf, y_line), conf_line, fill=clr_secondary, font=font_small)
+
+        # per-card vízjel
+        if watermark_mode == "per-card" and logo_rgba is not None:
+            _draw_card_watermark(bg, rect, logo_rgba,
+                                 rel_scale=max(0.08, min(0.5, 0.20)),
+                                 opacity=max(0.03, min(0.25, watermark_opacity)),
+                                 margin=24)
+        return y_top + card_h + 20
+
+    # Piaconként első jelölt
+    x1x2 = (tickets.get("x1x2") or [])
+    btts = (tickets.get("btts") or [])
+    ou25 = (tickets.get("overunder") or [])
+    blocks = []
+    if x1x2: blocks.append(("1X2", x1x2[0]))
+    if btts: blocks.append(("BTTS", btts[0]))
+    if ou25: blocks.append(("O/U 2.5", ou25[0]))
+
+    if not blocks:
+        draw.text((pad, y), "Ma nincs megfelelő tipp.", fill=clr_primary, font=font_text)
+        bio = io.BytesIO(); bg.save(bio, format="PNG"); return bio.getvalue()
+
+    for market, e in blocks:
+        league = e.get("league_name", "-")
+        home = e.get("home_name", "?")
+        away = e.get("away_name", "?")
+        kickoff = e.get("kickoff_local", e.get("kickoff_utc", "?"))
+        tip = e.get("selection", "")
+        sel = str(tip).upper()
+        if market == "1X2":
+            if "HOME" in sel: tip_hu = "Hazai győzelem"
+            elif "AWAY" in sel: tip_hu = "Vendég győzelem"
+            elif "DRAW" in sel: tip_hu = "Döntetlen"
+            else: tip_hu = tip
+        elif market == "BTTS":
+            tip_hu = "Igen" if sel == "YES" else "Nem" if sel == "NO" else tip
+        else:
+            tip_hu = "Felett 2.5" if "OVER" in sel else "Alatt 2.5" if "UNDER" in sel else tip
+
+        odds = e.get("odds", 0)
+        model_p = float(e.get("model_prob", 0.0) or 0.0)
+        market_p = float(e.get("market_prob", 0.0) or 0.0)
+        edge = float(e.get("edge", 0.0) or 0.0)
+        strength = float(e.get("market_strength", 0.0) or 0.0)
+
+        y = draw_block(y, market, league, str(home), str(away), str(kickoff), tip_hu, odds, model_p, market_p, edge, strength)
+
+    # Globál vízjel – sarok vagy átlós középre forgatott
+    if watermark_mode == "global" and logo_rgba is not None:
+        _draw_global_watermark(
+            bg, logo_rgba, W, H,
+            rel_scale=max(0.5, min(1.6, watermark_scale)),
+            opacity=max(0.03, min(0.25, watermark_opacity)),
+            pad=pad,
+            bottom_offset=120,
+            angle=watermark_angle  # 45 fok: átlós, középre helyezett
+        )
+
+    # Lábléc: balra figyelmeztetés, jobbra handle
+    y_footer = H - 60
+    left_footer = "A sportfogadás kockázattal jár. Játssz felelősséggel."
+    right_footer = "@DK - Sports"
+    w_left, h_left = _textsize(draw, left_footer, font_small)
+    w_right, h_right = _textsize(draw, right_footer, font_small)
+    if w_left + w_right + (2 * pad) + 24 <= W:
+        draw.text((pad, y_footer), left_footer, fill=clr_secondary, font=font_small)
+        draw.text((W - pad - w_right, y_footer), right_footer, fill=clr_secondary, font=font_small)
+    else:
+        upper_y = max(H - 60 - h_left - 8, pad)
+        draw.text((pad, upper_y), left_footer, fill=clr_secondary, font=font_small)
+        draw.text((W - pad - w_right, y_footer), right_footer, fill=clr_secondary, font=font_small)
+
+    bio = io.BytesIO()
+    bg.save(bio, format="PNG")
+    return bio.getvalue()
 
 def parse_ensemble_weights() -> dict:
     try:
@@ -234,65 +775,156 @@ class TippmixProWampClient:
         self.verbose=verbose
         self._ws=None
         self._rid=1000
-    async def __aenter__(self):
+
+    async def _open_ws(self):
         import websockets
-        self._ws=await websockets.connect("wss://sportsapi.tippmixpro.hu/v2", subprotocols=["wamp.2.json"])
+        # Stabilabb keepalive és lezárási beállítások
+        self._ws = await websockets.connect(
+            "wss://sportsapi.tippmixpro.hu/v2",
+            subprotocols=["wamp.2.json"],
+            ping_interval=30,
+            ping_timeout=30,
+            close_timeout=5,
+            max_queue=64,
+        )
+
+    async def _handshake(self, timeout=8):
         await self._ws.send(json.dumps(HELLO_FRAME))
-        while True:
-            raw=await self._ws.recv()
-            try: msg=json.loads(raw)
-            except: continue
-            if isinstance(msg,list) and msg and msg[0]==WAMP_WELCOME:
-                if self.verbose: logger.info("[TIPP] WELCOME")
-                break
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            raw = await asyncio.wait_for(self._ws.recv(), timeout=timeout)
+            try:
+                msg = json.loads(raw)
+            except:
+                continue
+            if isinstance(msg, list) and msg and msg[0] == WAMP_WELCOME:
+                if self.verbose:
+                    logger.info("[TIPP] WELCOME")
+                return True
+        return False
+
+    async def _reconnect(self) -> bool:
+        try:
+            if self._ws:
+                await self._ws.close()
+        except Exception:
+            pass
+        self._ws = None
+        try:
+            await self._open_ws()
+            ok = await self._handshake(timeout=8)
+            if not ok:
+                logger.warning("[TIPP] Reconnect handshake timeout.")
+            return ok
+        except Exception:
+            logger.warning("[TIPP] Reconnect failed.", exc_info=True)
+            return False
+
+    async def __aenter__(self):
+        await self._open_ws()
+        ok = await self._handshake(timeout=8)
+        if not ok:
+            # egy próbálkozás reconnectre
+            rec_ok = await self._reconnect()
+            if not rec_ok:
+                raise RuntimeError("TippmixPro WAMP handshake failed")
         return self
+
     async def __aexit__(self, *exc):
         if self._ws:
-            await self._ws.close()
-    async def _call(self, proc: str, kwargs: dict, expect_initial_dump=False, timeout=8) -> dict:
-        rid=self._rid; self._rid+=1
-        frame=[WAMP_CALL, rid, {}, proc, [], kwargs]
-        await self._ws.send(json.dumps(frame))
-        t0=time.time()
-        while time.time()-t0<timeout:
             try:
-                raw=await asyncio.wait_for(self._ws.recv(), timeout=timeout)
-            except asyncio.TimeoutError:
-                break
-            try: msg=json.loads(raw)
-            except: continue
-            if not isinstance(msg,list): continue
-            if msg[0]==WAMP_ERROR and len(msg)>2 and msg[2]==rid:
-                return {"error": True, "frame": msg}
-            if msg[0]==WAMP_RESULT and msg[1]==rid:
-                payload=msg[4] if len(msg)>4 else {}
-                if expect_initial_dump:
-                    if payload.get("messageType")=="INITIAL_DUMP":
+                await self._ws.close()
+            except Exception:
+                pass
+
+    async def _call(self, proc: str, kwargs: dict, expect_initial_dump=False, timeout=10) -> dict:
+        # Belső segéd az egyhívásos retry-hoz
+        async def _send_and_wait():
+            rid = self._rid
+            self._rid += 1
+            frame = [WAMP_CALL, rid, {}, proc, [], kwargs]
+            await self._ws.send(json.dumps(frame))
+            t0 = time.time()
+            while time.time() - t0 < timeout:
+                try:
+                    raw = await asyncio.wait_for(self._ws.recv(), timeout=timeout)
+                except asyncio.TimeoutError:
+                    break
+                try:
+                    msg = json.loads(raw)
+                except:
+                    continue
+                if not isinstance(msg, list):
+                    continue
+                if msg[0] == WAMP_ERROR and len(msg) > 2 and msg[2] == rid:
+                    return {"error": True, "frame": msg}
+                if msg[0] == WAMP_RESULT and msg[1] == rid:
+                    payload = msg[4] if len(msg) > 4 else {}
+                    if expect_initial_dump:
+                        if payload.get("messageType") == "INITIAL_DUMP":
+                            return payload
+                    else:
                         return payload
-                else:
-                    return payload
-        return {"timeout": True}
+            return {"timeout": True}
+
+        # első próbálkozás
+        try:
+            if not self._ws:
+                ok = await self._reconnect()
+                if not ok:
+                    return {"error": True, "reconnect_failed": True}
+            res = await _send_and_wait()
+            # ha timeout vagy error, egy reconnect + retry
+            if res.get("timeout") or res.get("error"):
+                ok = await self._reconnect()
+                if not ok:
+                    return res | {"reconnect_failed": True}
+                res2 = await _send_and_wait()
+                return res2
+            return res
+        except Exception as e:
+            # kapcsolat bontás esetén 1 reconnect + retry
+            try:
+                ok = await self._reconnect()
+                if not ok:
+                    return {"error": True, "exception": str(e), "reconnect_failed": True}
+                res3 = await _send_and_wait()
+                return res3
+            except Exception as e2:
+                return {"error": True, "exception": f"{e} | {e2}", "reconnect_failed": True}
+
+    # ===== VISSZATETT (KELLŐ) METÓDUSOK =====
+
+    async def initial_dump_topic(self, topic: str) -> List[dict]:
+        """WAMP initial dump egy adott topikra."""
+        payload = await self._call("/sports#initialDump", {"topic": topic}, expect_initial_dump=True)
+        return payload.get("records", []) if isinstance(payload, dict) else []
+
     async def get_matches_for_venue_tournament(self, venue_id: str, tournament_id: str) -> List[dict]:
-        payload=await self._call("/sports#matches", {
+        """Meccsek lekérése venue + tournament alapján."""
+        payload = await self._call("/sports#matches", {
             "lang": self.lang,
             "sportId": self.sport_id,
-            "venueId": venue_id,
-            "tournamentId": tournament_id
+            "venueId": str(venue_id),
+            "tournamentId": str(tournament_id),
         })
-        return payload.get("records",[])
-    async def initial_dump_topic(self, topic: str) -> List[dict]:
-        payload=await self._call("/sports#initialDump", {"topic": topic}, expect_initial_dump=True)
-        return payload.get("records",[])
+        return payload.get("records", []) if isinstance(payload, dict) else []
+
     async def fetch_match_markets_group(self, match_id: str, group_key="NEPSZERU") -> List[dict]:
-        topics=[
+        """Egy meccs népszerű piaccsoportjának odszai (három topikból)."""
+        topics = [
             f"/sports/{self.cluster}/{self.lang}/match/{match_id}",
             f"/sports/{self.cluster}/{self.lang}/event/{match_id}/market-groups",
-            f"/sports/{self.cluster}/{self.lang}/{match_id}/match-odds/market-group/{group_key}"
+            f"/sports/{self.cluster}/{self.lang}/{match_id}/match-odds/market-group/{group_key}",
         ]
-        out=[]
+        out = []
         for tp in topics:
-            recs=await self.initial_dump_topic(tp)
-            out.extend([r for r in recs if isinstance(r,dict)])
+            try:
+                recs = await self.initial_dump_topic(tp)
+                out.extend([r for r in recs if isinstance(r, dict)])
+            except Exception:
+                logger.exception("[TIPP] initial_dump_topic hiba (topic=%s)", tp)
+            await asyncio.sleep(0.02)
         return out
 
 class TippmixOddsExtractor:
@@ -2098,57 +2730,67 @@ def allocate_stakes(analysis_results: list[dict])->list[dict]:
     max_single=bankroll * MAX_SINGLE_STAKE_FRACTION
     picks=[]
     for r in analysis_results:
-        odds=r.get("odds")
-        if not odds: continue
-        
-        # Margin szűrés alkalmazása
-        filtered_odds = filter_odds_by_margin(odds)
-        if not filtered_odds.get("one_x_two"):
-            continue  # Ha az 1X2 odds nem felel meg a margin kritériumnak
-        
-        odds = filtered_odds  # Használjuk a szűrt odds-okat
-        
+        # Az analysis["odds"] itt sima 1X2 dict: {"home":..,"draw":..,"away":..}
+        odds = r.get("odds")
+        if not odds:
+            continue
+
+        # 1X2 margin ellenőrzés közvetlenül a sima dict-re
+        if not passes_margin_filter_1x2(odds):
+            continue
+
         league_id=r.get("league_id")
+
         def passes_publish_threshold(edge_val: float)->bool:
             # Value betting logika: minimum edge threshold ellenőrzése
             if edge_val < MIN_EDGE_THRESHOLD:
                 return False
-                
-            # No league-based filtering - use simple edge threshold
+            # Nincs liga alapú szűrés – egyszerű edge threshold
             return edge_val > 0
+
         edge_d=r.get("edge",{})
         kelly_d=r.get("kelly",{})
         best_sel=None; best_edge=0.0
-        
+
         # Döntetlen kizárása 1X2 piacokról
         selections_to_check = ["home", "away"]
         if not EXCLUDE_DRAW_1X2:
             selections_to_check.append("draw")
-        
+
         for sel in selections_to_check:
             e=edge_d.get(sel,0.0)
             if e>0 and e>best_edge:
                 best_edge=e; best_sel=sel
-        if not best_sel: continue
+        if not best_sel: 
+            continue
+
         sel_odds=odds.get(best_sel)
-        if not sel_odds: continue
-        try: sel_odds=float(sel_odds)
-        except: continue
-        if sel_odds>MAX_ODDS_1X2_PICKS: continue
-        if best_edge>PICK_EDGE_CAP_1X2: continue
-        if not passes_publish_threshold(best_edge): continue
-        
+        if not sel_odds: 
+            continue
+        try: 
+            sel_odds=float(sel_odds)
+        except: 
+            continue
+
+        if sel_odds>MAX_ODDS_1X2_PICKS: 
+            continue
+        if best_edge>PICK_EDGE_CAP_1X2: 
+            continue
+        if not passes_publish_threshold(best_edge): 
+            continue
+
         # Fix tét rendszer - FIX_STAKE_AMOUNT használata Kelly helyett
         stake = FIX_STAKE_AMOUNT
-        
+
         # Bankroll ellenőrzés
         if stake > max_single:
             stake = max_single
         if stake < 1: 
             continue
-            
+
         projected=stake*sel_odds
         model_prob=r.get("model_probs",{}).get(best_sel,0.0)
+
         implied_block=r.get("market_prob_details",{}).get("one_x_two",{})
         margin_adj_diff=None; z_edge=None; raw_edge_val=best_edge
         if implied_block and "selections" in implied_block:
@@ -2156,15 +2798,22 @@ def allocate_stakes(analysis_results: list[dict])->list[dict]:
             if sel_info:
                 margin_adj_diff=sel_info.get("margin_adj_diff")
                 z_edge=sel_info.get("z_edge")
+
         implied=None
         try:
             inv_sum=sum(1/float(odds[k]) for k in ("home","draw","away"))
             implied=(1/sel_odds)/inv_sum if inv_sum>0 else 0
-        except: implied=0
+        except: 
+            implied=0
+
         diff=model_prob-(implied or 0)
         enhanced_used="enhanced_model" in r
         rating_diff=(r.get("home_rating",{}).get("combined_rating",0) -
                      r.get("away_rating",{}).get("combined_rating",0))
+
+        # Kelly arány a jegyzethez – eddig nem volt definiálva (NameError fix)
+        k_frac = float(kelly_d.get(best_sel, 0.0))
+
         rationale=build_rationale(
             market="1X2",
             selection=best_sel.upper(),
@@ -2240,6 +2889,8 @@ def to_local_time(iso_utc: str)->str:
 def select_best_tickets_enhanced(analyzed_results: list[dict], only_today: bool=True, max_tips_per_market: int=2) -> dict:
     """
     Enhanced ticket selection that returns multiple top tips per market
+    Kiegészítve meta (home_name, away_name, league_name, kickoff_local) beemeléssel,
+    és FIX: BTTS kulcsok (btts_yes/btts_no) helyes használata.
     """
     tz=ZoneInfo(LOCAL_TZ)
     today_local=datetime.now(tz=tz).date()
@@ -2260,15 +2911,13 @@ def select_best_tickets_enhanced(analyzed_results: list[dict], only_today: bool=
         except: return None
         
     def allow_ticket_for_public(r: dict, market: str)->bool:
-        # No league filtering - allow all matches
         return True
 
-    # Collect all candidates for each market
     candidates_1x2 = []
     candidates_btts = []
     candidates_ou = []
 
-    # Process 1X2 market
+    # 1X2
     for r in analyzed_results:
         if not allow_ticket_for_public(r,"1X2"): continue
         ko=r.get("kickoff_utc")
@@ -2279,7 +2928,6 @@ def select_best_tickets_enhanced(analyzed_results: list[dict], only_today: bool=
         ip=implied_probs_1x2(odds)
         if not ip: continue
         
-        # Calculate market strength
         market_strength = calculate_market_strength(odds, "1X2")
         
         for sel in ("home","draw","away"):
@@ -2291,8 +2939,7 @@ def select_best_tickets_enhanced(analyzed_results: list[dict], only_today: bool=
             if o>TICKET_MAX_ODDS_1X2: continue
             if abs(p-pi)>TICKET_DIFF_TOL_1X2: continue
             
-            # Enhanced value calculation considering market strength
-            value_score = e * (1 + market_strength / 100 * 0.1)  # 10% bonus for strong markets
+            value_score = e * (1 + market_strength / 100 * 0.1)
             
             candidates_1x2.append({
                 "fixture_id": r["fixture_id"],
@@ -2313,7 +2960,7 @@ def select_best_tickets_enhanced(analyzed_results: list[dict], only_today: bool=
                 "kickoff_local": format_local_time(r["kickoff_utc"])
             })
 
-    # Process BTTS market
+    # BTTS (FIX: btts_yes / btts_no kulcsok használata)
     for r in analyzed_results:
         if not allow_ticket_for_public(r,"BTTS"): continue
         ko=r.get("kickoff_utc")
@@ -2322,12 +2969,12 @@ def select_best_tickets_enhanced(analyzed_results: list[dict], only_today: bool=
         me=r.get("market_edge") or {}; mo=r.get("market_odds") or {}; mp=r.get("market_probs") or {}
         if not mo or not mp: continue
         
-        y_odds=mo.get("yes"); n_odds=mo.get("no")
+        y_odds=mo.get("btts_yes"); n_odds=mo.get("btts_no")
         if y_odds is None or n_odds is None: continue
         try: y_odds=float(y_odds); n_odds=float(n_odds)
         except: continue
         
-        # Calculate market strength for BTTS
+        # Market strength
         btts_odds = {"yes": y_odds, "no": n_odds}
         market_strength = calculate_market_strength(btts_odds, "BTTS")
         
@@ -2339,16 +2986,15 @@ def select_best_tickets_enhanced(analyzed_results: list[dict], only_today: bool=
         if not pair: continue
         p_yes_mkt,p_no_mkt=pair
         
-        for sel_raw in ("yes","no"):
-            e=me.get(sel_raw); p=mp.get(sel_raw)
+        for sel_key, sel_label in (("btts_yes","YES"), ("btts_no","NO")):
+            e=me.get(sel_key); p=mp.get(sel_key)
             if e is None or p is None: continue
             if e<=0 or e>EDGE_CAP_BTTs_OU: continue
-            o=y_odds if sel_raw=="yes" else n_odds
-            p_mkt=p_yes_mkt if sel_raw=="yes" else p_no_mkt
+            o = y_odds if sel_key=="btts_yes" else n_odds
+            p_mkt = p_yes_mkt if sel_key=="btts_yes" else p_no_mkt
             if o>TICKET_MAX_ODDS_2WAY: continue
             if abs(p-p_mkt)>TICKET_DIFF_TOL_2WAY: continue
             
-            # Enhanced value calculation
             value_score = e * (1 + market_strength / 100 * 0.1)
             
             candidates_btts.append({
@@ -2359,7 +3005,7 @@ def select_best_tickets_enhanced(analyzed_results: list[dict], only_today: bool=
                 "home_name": r.get("home_name"),
                 "away_name": r.get("away_name"),
                 "market": "BTTS",
-                "selection": sel_raw.upper(),
+                "selection": sel_label,         # YES / NO a megjelenítéshez
                 "edge": e,
                 "value_score": value_score,
                 "odds": o,
@@ -2370,7 +3016,7 @@ def select_best_tickets_enhanced(analyzed_results: list[dict], only_today: bool=
                 "kickoff_local": format_local_time(r["kickoff_utc"])
             })
 
-    # Process O/U 2.5 market
+    # O/U 2.5
     for r in analyzed_results:
         if not allow_ticket_for_public(r,"O/U 2.5"): continue
         ko=r.get("kickoff_utc")
@@ -2384,7 +3030,6 @@ def select_best_tickets_enhanced(analyzed_results: list[dict], only_today: bool=
         try: ov=float(ov); un=float(un)
         except: continue
         
-        # Calculate market strength for O/U
         ou_odds = {"over": ov, "under": un}
         market_strength = calculate_market_strength(ou_odds, "O/U")
         
@@ -2405,7 +3050,6 @@ def select_best_tickets_enhanced(analyzed_results: list[dict], only_today: bool=
             if o>TICKET_MAX_ODDS_2WAY: continue
             if abs(p-p_mkt)>TICKET_DIFF_TOL_2WAY: continue
             
-            # Enhanced value calculation
             value_score = e * (1 + market_strength / 100 * 0.1)
             
             label="OVER 2.5" if sel_raw=="over25" else "UNDER 2.5"
@@ -2428,16 +3072,203 @@ def select_best_tickets_enhanced(analyzed_results: list[dict], only_today: bool=
                 "kickoff_local": format_local_time(r["kickoff_utc"])
             })
 
-    # Sort and select top candidates for each market
+    # rendezés + enrich
     candidates_1x2.sort(key=lambda x: x["value_score"], reverse=True)
     candidates_btts.sort(key=lambda x: x["value_score"], reverse=True)
     candidates_ou.sort(key=lambda x: x["value_score"], reverse=True)
 
+    # A select_best_tickets_enhanced függvényen belül CSERÉLD LE az _enrich_list-et erre:
+    def _enrich_list(lst: list[dict]) -> list[dict]:
+        enriched = []
+        for e in lst:
+            try:
+                fid = e.get("fixture_id")
+                if fid:
+                    meta = load_fixture_meta(fid)
+                    if meta:
+                        if not e.get("home_name"):
+                            e["home_name"] = meta.get("home_name")
+                        if not e.get("away_name"):
+                            e["away_name"] = meta.get("away_name")
+                        if not e.get("league_name"):
+                            e["league_name"] = meta.get("league_name")
+                # kickoff_local pótolása (ha nincs)
+                if not e.get("kickoff_local"):
+                    e["kickoff_local"] = format_local_time(e.get("kickoff_utc",""))
+            except Exception:
+                # meta hiánya esetén hagyjuk meg az eddigi értékeket
+                pass
+            enriched.append(e)
+        return enriched
+
     return {
-        "x1x2": candidates_1x2[:max_tips_per_market] if candidates_1x2 else [],
-        "btts": candidates_btts[:max_tips_per_market] if candidates_btts else [],
-        "overunder": candidates_ou[:max_tips_per_market] if candidates_ou else []
+        "x1x2": _enrich_list(candidates_1x2[:max_tips_per_market] if candidates_1x2 else []),
+        "btts": _enrich_list(candidates_btts[:max_tips_per_market] if candidates_btts else []),
+        "overunder": _enrich_list(candidates_ou[:max_tips_per_market] if candidates_ou else [])
     }
+
+def select_auto_value_bets(analyzed_results: list[dict], only_today: bool=True) -> dict:
+    """
+    Automatikusan kiválasztja a legjobb value bet-et minden támogatott szelvénytípusra
+    (1X2, BTTS, Over/Under). Típusonként a legmagasabb value score-ú mérkőzést adja vissza.
+    
+    Args:
+        analyzed_results: Lista az elemzett mérkőzési adatokról
+        only_today: Csak mai mérkőzések figyelembevétele
+        
+    Returns:
+        Dict a legjobb value bet-ekkel minden piacra: {"1X2": bet_data, "BTTS": bet_data, "O/U": bet_data}
+    """
+    logger.info("Automatikus value bet kiválasztás indul...")
+    
+    if not analyzed_results:
+        logger.warning("Nincs elemzett mérkőzés adat az automatikus value bet kiválasztáshoz")
+        return {}
+    
+    try:
+        # Get enhanced tickets with all candidates
+        enhanced_tickets = select_best_tickets_enhanced(analyzed_results, only_today=only_today, max_tips_per_market=50)
+        
+        # Select the best single bet for each market type
+        best_bets = {}
+        
+        # 1X2 Market - highest value score
+        if enhanced_tickets.get("x1x2"):
+            candidates_1x2 = enhanced_tickets["x1x2"]
+            best_1x2 = max(candidates_1x2, key=lambda x: x.get("value_score", 0))
+            best_bets["1X2"] = best_1x2
+            logger.info(f"1X2 legjobb bet: FI#{best_1x2['fixture_id']} {best_1x2['selection']} @ {best_1x2['odds']} (edge: {best_1x2['edge']:.3f}, value: {best_1x2['value_score']:.3f})")
+        else:
+            logger.info("Nincs megfelelő 1X2 value bet ma")
+        
+        # BTTS Market - highest value score  
+        if enhanced_tickets.get("btts"):
+            candidates_btts = enhanced_tickets["btts"]
+            best_btts = max(candidates_btts, key=lambda x: x.get("value_score", 0))
+            best_bets["BTTS"] = best_btts
+            logger.info(f"BTTS legjobb bet: FI#{best_btts['fixture_id']} {best_btts['selection']} @ {best_btts['odds']} (edge: {best_btts['edge']:.3f}, value: {best_btts['value_score']:.3f})")
+        else:
+            logger.info("Nincs megfelelő BTTS value bet ma")
+        
+        # Over/Under Market - highest value score
+        if enhanced_tickets.get("overunder"):
+            candidates_ou = enhanced_tickets["overunder"]
+            best_ou = max(candidates_ou, key=lambda x: x.get("value_score", 0))
+            best_bets["O/U"] = best_ou
+            logger.info(f"O/U legjobb bet: FI#{best_ou['fixture_id']} {best_ou['selection']} @ {best_ou['odds']} (edge: {best_ou['edge']:.3f}, value: {best_ou['value_score']:.3f})")
+        else:
+            logger.info("Nincs megfelelő O/U value bet ma")
+        
+        logger.info(f"Automatikus kiválasztás kész: {len(best_bets)} piac, összesen {len(best_bets)} ajánlás")
+        return best_bets
+        
+    except Exception as e:
+        logger.exception("Hiba az automatikus value bet kiválasztásban")
+        return {}
+
+def generate_detailed_bet_message(bet_data: dict, market_type: str) -> str:
+    """
+    Részletes szelvény üzenet generálása egy value bet-hez Magyar formátumban
+    
+    Args:
+        bet_data: A value bet adatai (fixture_id, odds, edge, stb.)
+        market_type: Piac típusa ("1X2", "BTTS", "O/U")
+        
+    Returns:
+        Formázott HTML szelvény üzenet magyar nyelven
+    """
+    try:
+        # Market type emojis and Hungarian names
+        market_emojis = {"1X2": "⚽", "BTTS": "🥅", "O/U": "📊"}
+        market_names_hu = {"1X2": "Végeredmény", "BTTS": "Mindkét csapat gólt szerez", "O/U": "Gólok száma (2.5)"}
+        
+        # Selection translation to Hungarian
+        selection = bet_data.get('selection', '')
+        selection_hu = selection
+        if 'HOME' in selection.upper():
+            selection_hu = "Hazai győzelem"
+        elif 'AWAY' in selection.upper():
+            selection_hu = "Vendég győzelem" 
+        elif 'DRAW' in selection.upper():
+            selection_hu = "Döntetlen"
+        elif selection.upper() == "YES":
+            selection_hu = "Igen"
+        elif selection.upper() == "NO":
+            selection_hu = "Nem"
+        elif "OVER" in selection.upper():
+            selection_hu = "Felett 2.5 gól"
+        elif "UNDER" in selection.upper():
+            selection_hu = "Alatt 2.5 gól"
+        
+        # Confidence level based on edge value
+        edge_val = bet_data.get('edge', 0)
+        confidence = "Alacsony"
+        confidence_emoji = "🔸"
+        if edge_val >= 0.15:
+            confidence = "Magas"
+            confidence_emoji = "🔥"
+        elif edge_val >= 0.08:
+            confidence = "Közepes" 
+            confidence_emoji = "⚡"
+        
+        # Value score calculation
+        value_score = bet_data.get('value_score', 0)
+        
+        # Model and market probabilities as percentages
+        model_prob = bet_data.get('model_prob', 0) * 100
+        market_prob = bet_data.get('market_prob', 0) * 100
+        
+        # Market strength
+        market_strength = bet_data.get('market_strength', 0)
+        
+        # Format kickoff time
+        kickoff = bet_data.get('kickoff_local', bet_data.get('kickoff_utc', '?'))
+        
+        # League information with tier emoji
+        league_name = bet_data.get('league_name', 'Ismeretlen liga')
+        league_tier = bet_data.get('league_tier', '')
+        tier_emoji = "🌟" if league_tier in ("TIER1", "TIER1B") else "⚪"
+        
+        # Safe value extraction with defaults
+        home_name = bet_data.get('home_name', '?')
+        away_name = bet_data.get('away_name', '?')
+        odds = bet_data.get('odds', '?')
+        fixture_id = bet_data.get('fixture_id', '?')
+        
+        # Generate detailed explanation
+        message = f"""🎯 **AUTOMATIKUS VALUE BET**
+
+{market_emojis.get(market_type, '⚽')} **{market_names_hu.get(market_type, market_type)}**
+{tier_emoji} **{league_name}**
+
+**⚽ Mérkőzés:**
+{home_name} vs {away_name}
+🕒 {kickoff}
+
+**💰 Ajánlás:**
+🎯 **{selection_hu}** @ **{odds}**
+
+**📊 Elemzés:**
+📈 Modell valószínűség: **{model_prob:.1f}%**
+🏪 Piac valószínűség: **{market_prob:.1f}%**
+⚡ Edge (előny): **+{edge_val*100:.1f}%**
+🔥 Value Score: **{value_score:.3f}**
+
+**💪 Bizalmi szint:**
+{confidence_emoji} **{confidence}** bizalom
+
+**🏛️ Piac információ:**
+📊 Piac erő: **{market_strength:.1f}%**
+🆔 Fixture ID: #{fixture_id}
+
+**💡 Indoklás:**
+A modellünk **{model_prob:.1f}%** valószínűséget ad erre az eredményre, míg a piac csak **{market_prob:.1f}%**-ot ár be. Ez **{edge_val*100:.1f}%** előnyt jelent számunkra, ami {confidence.lower()} bizalmi szintű value betting lehetőség."""
+
+        return message
+        
+    except Exception as e:
+        logger.exception(f"Hiba a {market_type} üzenet generálásában")
+        return f"❌ Hiba történt a {market_type} szelvény generálásában: {str(e)}"
 
 def select_best_tickets(analyzed_results: list[dict], only_today: bool=True) -> dict:
     tz=ZoneInfo(LOCAL_TZ)
@@ -2925,7 +3756,7 @@ def generate_reliability_diagram(hist: dict, out_path: Path):
             if bins[i] <= p < bins[i+1]:
                 return f"{bins[i]:.2f}-{bins[i+1]:.2f}"
         return f"{bins[-2]:.2f}-{bins[-1]:.2f}"
-    output={"generated_at": datetime.utcnow().isoformat(), "bin_size": bin_size, "categories": {}}
+    output={"generated_at": datetime.now(timezone.utc).isoformat(), "bin_size": bin_size, "categories": {}}
     
     # Adatok gyűjtése minden kategóriához
     plot_data = {}
@@ -3067,7 +3898,7 @@ def generate_comprehensive_stats(analyzed_results: list[dict], output_path: Path
     output_path.parent.mkdir(parents=True, exist_ok=True)
     
     stats = {
-        "generated_at": datetime.utcnow().isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "total_matches": len(analyzed_results),
         "summary": {
             "leagues_covered": len(set(r.get("league_id") for r in analyzed_results if r.get("league_id"))),
@@ -3284,7 +4115,7 @@ def generate_daily_report(picks_file: Path, out_dir: Path):
         return
     picks=data.get("picks", [])
     stats={
-        "date": datetime.utcnow().strftime("%Y-%m-%d"),
+        "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "total_picks": len(picks),
         "edge_buckets": {},
         "overall":{"wins":0,"losses":0,"roi":0.0,"stake_sum":0.0,"return_sum":0.0}
@@ -3374,7 +4205,6 @@ async def run_pipeline(fetch: bool, analyze: bool,
     if fetch:
         async with APIFootballClient(API_KEY, API_BASE) as client:
             if fixture_ids:
-                # Handle specific fixture IDs request
                 fixture_objs=[]
                 for fid in fixture_ids:
                     js=await client.get("/fixtures", {"id": fid})
@@ -3382,7 +4212,6 @@ async def run_pipeline(fetch: bool, analyze: bool,
                     if resp: fixture_objs.append(resp[0])
                 logger.info("Specific fixtures requested: %d", len(fixture_objs))
             else:
-                # NEW WORKFLOW: Start with TippmixPro as primary source
                 logger.info("Starting TippmixPro-first workflow - getting all available matches...")
                 try:
                     tipp_matches=await tippmix_fetch_and_map(TIPPMIX_DAYS_AHEAD)
@@ -3396,12 +4225,10 @@ async def run_pipeline(fetch: bool, analyze: bool,
                     fixture_objs=await fetch_upcoming_fixtures(client, days_ahead)
                     logger.info("API-Football fallback fixtures: %d", len(fixture_objs))
                 else:
-                    # Get API-Football data for all days to enable matching
                     logger.info("Fetching API-Football data for statistical analysis...")
                     all_api_fixtures=await fetch_upcoming_fixtures(client, days_ahead)
                     logger.info("API-Football fixtures available for matching: %d", len(all_api_fixtures))
                     
-                    # Create API-Football index for matching
                     api_index=[]
                     for fx in all_api_fixtures:
                         fixture=fx.get("fixture",{}) or {}
@@ -3418,7 +4245,6 @@ async def run_pipeline(fetch: bool, analyze: bool,
                             "fixture_obj": fx
                         })
                     
-                    # Match TippmixPro matches with API-Football data
                     matched=[]; mapping_api_to_tip={}
                     for tm in tipp_matches.values():
                         home=tm.get("homeParticipantName") or ""
@@ -3446,6 +4272,7 @@ async def run_pipeline(fetch: bool, analyze: bool,
                               len(matched), len(tipp_matches), TIPPMIX_SIMILARITY_THRESHOLD)
                     fixture_objs=matched
                     tippmix_mapping=mapping_api_to_tip
+
             filtered=[]
             for fx in fixture_objs:
                 status=fx.get("fixture",{}).get("status",{}).get("short")
@@ -3457,16 +4284,33 @@ async def run_pipeline(fetch: bool, analyze: bool,
             tasks=[asyncio.create_task(fetch_fixture_bundle(client, fx, DATA_ROOT)) for fx in filtered]
             if tasks: await asyncio.gather(*tasks)
             new_fetched=[fx.get("fixture",{}).get("id") for fx in filtered if fx.get("fixture",{}).get("id")]
+
+            # Tippmix mapping állapotot azonnal felvesszük (hogy a watcher dolgozhasson),
+            # majd odds cache-t megpróbáljuk batch-ekben feltölteni. Hiba esetén nem buktatjuk el a /run-t.
             if USE_TIPPMIX and tippmix_mapping:
-                extractor=TippmixOddsExtractor()
-                async with TippmixProWampClient(verbose=False) as cli:
-                    for api_fid, tip_mid in tippmix_mapping.items():
-                        recs=await cli.fetch_match_markets_group(tip_mid, TIPPMIX_MARKET_GROUP)
-                        std=extractor.extract(recs)
-                        tippmix_odds_cache[api_fid]=std
-                        await asyncio.sleep(0.05)
                 GLOBAL_RUNTIME["tippmix_mapping"]=tippmix_mapping
-                GLOBAL_RUNTIME["tippmix_odds_cache"]=tippmix_odds_cache
+                try:
+                    extractor=TippmixOddsExtractor()
+                    items = list(tippmix_mapping.items())
+                    batch_size = 80
+                    for i in range(0, len(items), batch_size):
+                        batch = items[i:i+batch_size]
+                        # új kapcsolat batch-enként
+                        async with TippmixProWampClient(verbose=False) as cli:
+                            for api_fid, tip_mid in batch:
+                                try:
+                                    recs=await cli.fetch_match_markets_group(tip_mid, TIPPMIX_MARKET_GROUP)
+                                    std=extractor.extract(recs)
+                                    tippmix_odds_cache[api_fid]=std
+                                except Exception:
+                                    logger.exception("[TIPP] Hiba odds lekérésnél (mid=%s) – tovább lépek.", tip_mid)
+                                await asyncio.sleep(0.03)
+                        await asyncio.sleep(0.1)
+                    GLOBAL_RUNTIME["tippmix_odds_cache"]=tippmix_odds_cache
+                except Exception:
+                    logger.exception("[TIPP] Odds cache feltöltés megszakadt – folytatás API-Football oddsokkal.")
+                    # marad a mapping; watcher később tölthet
+                    GLOBAL_RUNTIME.setdefault("tippmix_odds_cache", {})
             else:
                 GLOBAL_RUNTIME["tippmix_mapping"]={}
                 GLOBAL_RUNTIME["tippmix_odds_cache"]={}
@@ -3541,7 +4385,7 @@ def retrain_calibrators(cal_path: Path):
 
 def export_bayes_dataset(path: Path, days: int):
     ds=gather_bayes_history(DATA_ROOT, days)
-    out={"generated_at": datetime.utcnow().isoformat(), "sample_count": len(ds), "matches": ds}
+    out={"generated_at": datetime.now(timezone.utc).isoformat(), "sample_count": len(ds), "matches": ds}
     safe_write_json(path, out)
     logger.info("Bayes dataset exportálva: %s (count=%d)", path.name, len(ds))
 
@@ -3607,6 +4451,27 @@ class TelegramBot:
                     logger.exception("Polling hiba – %.1fs múlva újra.", wait_s)
                     await asyncio.sleep(wait_s)
                     backoff = min(backoff * 2, max_backoff)
+
+    async def send_photo(self, photo_bytes: bytes, caption: str = "", chat_id: str | None = None):
+        if not chat_id:
+            chat_id = self.default_chat_id
+        if not chat_id:
+            logger.warning("Nincs chat_id a Telegram kép küldéséhez.")
+            return
+        try:
+            form = aiohttp.FormData()
+            form.add_field("chat_id", chat_id)
+            if caption:
+                form.add_field("caption", caption[:1024])
+            form.add_field("photo", photo_bytes, filename="ticket.png", content_type="image/png")
+            if self._session:
+                await self._session.post(self.base + "/sendPhoto", data=form)
+            else:
+                async with aiohttp.ClientSession(timeout=ClientTimeout(total=30)) as s:
+                    await s.post(self.base + "/sendPhoto", data=form)
+        except Exception:
+            logger.exception("Telegram send_photo hiba")
+
     async def handle_command(self, text: str, chat_id: str):
         parts = text.split()
         cmd = parts[0].lower()
@@ -3616,6 +4481,8 @@ class TelegramBot:
                 "Parancsok:\n"
                 "/run | /run 1 | /run ids <idk>\n"
                 "/ticket (/szelveny)\n"
+                "/ticketimg (/szelvenykep)\n"
+                "/autobets (/autovalue) - Automatikus value bet kiválasztás\n"
                 "/status\n"
                 "/picks\n"
                 "/limit <n>\n"
@@ -3728,13 +4595,10 @@ class TelegramBot:
                     await self.send("\n".join(lines), chat_id)
         elif cmd in ("/ticket","/szelveny"):
             def fmt(entry, title):
-                if not entry: return f"{title}:\n  Nincs ajánlás."
-                
-                # New enhanced telegram format
+                if not entry: return f"🚫 {title}: Nincs ajánlás"
                 market_emoji = {"1X2": "⚽", "BTTS": "🥅", "O/U 2.5": "📊"}
                 market_hu = {"1X2": "1X2", "BTTS": "BTTS", "O/U 2.5": "O/U 2.5"}
                 
-                # Parse selection for Hungarian display
                 selection = entry.get('selection', '')
                 selection_hu = selection
                 if 'home' in selection.lower():
@@ -3752,7 +4616,6 @@ class TelegramBot:
                 elif "UNDER" in selection.upper():
                     selection_hu = "Alatt 2.5"
                 
-                # Confidence level based on edge value
                 edge_val = entry.get('edge', 0)
                 confidence = "Alacsony"
                 if edge_val >= 0.15:
@@ -3760,17 +4623,11 @@ class TelegramBot:
                 elif edge_val >= 0.08:
                     confidence = "Közepes"
                 
-                # Market strength calculation (if available)
                 market_strength = entry.get('market_strength', None)
-                market_strength_str = ""
-                if market_strength is not None:
-                    market_strength_str = f"\n💪 Piac-erő: {market_strength:.1f}%"
+                market_strength_str = f"\n💪 Piac-erő: {market_strength:.1f}%" if market_strength is not None else ""
                 
-                # Model and market probabilities
-                model_prob = entry.get('model_prob', 0) * 100
-                market_prob = entry.get('market_prob', 0) * 100
-                
-                # Format kickoff time
+                model_prob = (entry.get('model_prob', 0) or 0) * 100
+                market_prob = (entry.get('market_prob', 0) or 0) * 100
                 kickoff = entry.get('kickoff_local', entry.get('kickoff_utc', '?'))
                 
                 return (
@@ -3783,36 +4640,72 @@ class TelegramBot:
                     f"🔒 Bizalom: {confidence}{market_strength_str}"
                 )
             
-            # Use enhanced ticket selection for multiple tips per market
             summ = self.runtime.get("last_summary")
             if summ and summ.get("analyzed_results"):
-                enhanced_tickets = select_best_tickets_enhanced(summ.get("analyzed_results"), only_today=True, max_tips_per_market=2)
+                # Piaconként 1 ajánlás
+                enhanced_tickets = select_best_tickets_enhanced(
+                    summ.get("analyzed_results"), only_today=True, max_tips_per_market=1
+                )
             else:
                 enhanced_tickets = {"x1x2": [], "btts": [], "overunder": []}
             
-            def fmt_enhanced(entries, title):
-                if not entries: 
-                    return f"🚫 {title}: Nincs ajánlás"
-                
-                results = []
-                for i, entry in enumerate(entries[:2]):  # Max 2 tips per market
-                    result = fmt(entry, title)
-                    if i > 0:  # Add separator for multiple tips
-                        result = "─" * 25 + "\n" + result
-                    results.append(result)
-                return "\n".join(results)
+            parts = []
+            x1x2_list = enhanced_tickets.get("x1x2") or []
+            btts_list = enhanced_tickets.get("btts") or []
+            ou_list = enhanced_tickets.get("overunder") or []
             
-            msg_parts = [
-                fmt_enhanced(enhanced_tickets.get("x1x2", []), "1X2"),
-                fmt_enhanced(enhanced_tickets.get("btts", []), "BTTS"), 
-                fmt_enhanced(enhanced_tickets.get("overunder", []), "O/U 2.5")
-            ]
+            if x1x2_list:
+                parts.append(fmt(x1x2_list[0], "1X2"))
+            if btts_list:
+                parts.append(fmt(btts_list[0], "BTTS"))
+            if ou_list:
+                parts.append(fmt(ou_list[0], "O/U 2.5"))
             
-            msg = "\n\n".join([part for part in msg_parts if "Nincs ajánlás" not in part])
-            if not msg:
-                msg = "🚫 Nincs tipp ma"
-            
+            msg = "\n\n".join(parts) if parts else "🚫 Nincs tipp ma"
             await self.send(msg, chat_id)
+        elif cmd in ("/ticketimg","/szelvenykep"):
+            # 1) Ellenőrzés: van-e elemzés
+            summ = self.runtime.get("last_summary")
+            if not summ or not summ.get("analyzed_results"):
+                await self.send("❌ Nincs elérhető elemzés. Előbb futtasd: /run", chat_id)
+                return
+
+            if not HAVE_PIL:
+                await self.send("❌ A kép generáláshoz telepítsd a Pillow csomagot:\n\npip install Pillow", chat_id)
+                return
+
+            try:
+                # 2) Piaconként 1 ajánlás, enriched nevekkel
+                enhanced = select_best_tickets_enhanced(
+                    summ.get("analyzed_results"), only_today=True, max_tips_per_market=1
+                )
+
+                # 3) PNG generálása
+                png_bytes = generate_ticket_card(enhanced, title="Szelvény", tz_label=LOCAL_TZ, logo_path="assets/logo.png", watermark_mode="global", watermark_opacity=0.08, watermark_scale=0.32)
+
+                # 4) Rövid caption (összegzés)
+                parts = []
+                def one_line(entry, title):
+                    if not entry: return None
+                    e = entry[0]
+                    home = e.get("home_name","?")
+                    away = e.get("away_name","?")
+                    sel = e.get("selection","")
+                    odds = e.get("odds","?")
+                    return f"{title}: {home}–{away} · {sel} @ {odds}"
+                l1 = one_line(enhanced.get("x1x2"), "1X2")
+                l2 = one_line(enhanced.get("btts"), "BTTS")
+                l3 = one_line(enhanced.get("overunder"), "O/U 2.5")
+                for l in (l1,l2,l3):
+                    if l: parts.append(l)
+                caption = "\n".join(parts) if parts else "DK - Sports – Szelvény"
+
+                # 5) Küldés
+                await self.send_photo(png_bytes, caption=caption, chat_id=chat_id)
+
+            except Exception as e:
+                logger.exception("Ticket kép generálási hiba")
+                await self.send(f"❌ Hiba a szelvénykártya készítésekor: {e}", chat_id)
         elif cmd == "/refresh_tickets":
             tickets = build_offline_tickets(DATA_ROOT)
             if tickets:
@@ -3890,9 +4783,120 @@ class TelegramBot:
                 await self.send(
                     f"Kész: fetched={len(summary['fetched'])} analyzed={summary['analyzed_count']} "
                     f"picks={summary['picks_count']}", chat_id)
+
+                # AUTOMATIKUS SZELVÉNY ÜZENET /run után – piaconként 1 ajánlás
+                analyzed_results = summary.get("analyzed_results") or []
+                if analyzed_results:
+                    enhanced_tickets = select_best_tickets_enhanced(
+                        analyzed_results, only_today=True, max_tips_per_market=1
+                    )
+
+                    def fmt(entry, title):
+                        if not entry: return f"🚫 {title}: Nincs ajánlás"
+                        market_emoji = {"1X2": "⚽", "BTTS": "🥅", "O/U 2.5": "📊"}
+                        market_hu = {"1X2": "1X2", "BTTS": "BTTS", "O/U 2.5": "O/U 2.5"}
+
+                        selection = entry.get('selection', '')
+                        selection_hu = selection
+                        if 'home' in selection.lower():
+                            selection_hu = "Hazai győzelem"
+                        elif 'away' in selection.lower():
+                            selection_hu = "Vendég győzelem"
+                        elif 'draw' in selection.lower():
+                            selection_hu = "Döntetlen"
+                        elif selection.upper() == "YES":
+                            selection_hu = "Igen"
+                        elif selection.upper() == "NO":
+                            selection_hu = "Nem"
+                        elif "OVER" in selection.upper():
+                            selection_hu = "Felett 2.5"
+                        elif "UNDER" in selection.upper():
+                            selection_hu = "Alatt 2.5"
+
+                        edge_val = entry.get('edge', 0)
+                        confidence = "Alacsony"
+                        if edge_val >= 0.15:
+                            confidence = "Magas"
+                        elif edge_val >= 0.08:
+                            confidence = "Közepes"
+
+                        market_strength = entry.get('market_strength', None)
+                        market_strength_str = f"\n💪 Piac-erő: {market_strength:.1f}%" if market_strength is not None else ""
+
+                        model_prob = (entry.get('model_prob', 0) or 0) * 100
+                        market_prob = (entry.get('market_prob', 0) or 0) * 100
+                        kickoff = entry.get('kickoff_local', entry.get('kickoff_utc', '?'))
+
+                        return (
+                            f"{market_emoji.get(title, '⚽')} {market_hu.get(title, title)} – {entry.get('league_name','?')}\n"
+                            f"{entry.get('home_name','?')} vs {entry.get('away_name','?')}\n"
+                            f"🕒 {kickoff}\n"
+                            f"🎯 Tipp: {selection_hu} @ {entry['odds']}\n"
+                            f"📊 Modell: {model_prob:.1f}% | Piac: {market_prob:.1f}%\n"
+                            f"📈 Érték: +{edge_val*100:.1f}%\n"
+                            f"🔒 Bizalom: {confidence}{market_strength_str}"
+                        )
+
+                    # Vedd ki az első elemet piaconként (ha létezik)
+                    parts = []
+                    x1x2_list = enhanced_tickets.get("x1x2") or []
+                    btts_list = enhanced_tickets.get("btts") or []
+                    ou_list = enhanced_tickets.get("overunder") or []
+
+                    if x1x2_list:
+                        parts.append(fmt(x1x2_list[0], "1X2"))
+                    if btts_list:
+                        parts.append(fmt(btts_list[0], "BTTS"))
+                    if ou_list:
+                        parts.append(fmt(ou_list[0], "O/U 2.5"))
+
+                    if parts:
+                        await self.send("\n\n".join(parts), chat_id)
+                    else:
+                        await self.send("🚫 Nincs tipp ma", chat_id)
+                else:
+                    await self.send("🚫 Nincs friss elemzés – tipp nem küldhető.", chat_id)
+
             except Exception as e:
                 logger.exception("Run hiba (telegram)")
                 await self.send(f"Hiba: {e}", chat_id)
+
+        elif cmd in ("/autobets", "/autovalue"):
+            await self.send("🎯 Automatikus value bet kiválasztás indul...", chat_id)
+            try:
+                summ = self.runtime.get("last_summary")
+                if not summ or not summ.get("analyzed_results"):
+                    await self.send("❌ Nincs elérhető elemzés. Futtasd a /run parancsot először!", chat_id)
+                    return
+                
+                # Get the best value bets for each market type
+                best_bets = select_auto_value_bets(summ.get("analyzed_results"), only_today=True)
+                
+                if not best_bets:
+                    await self.send("🚫 Nincs megfelelő value bet ma. Próbáld újra később!", chat_id)
+                    return
+                
+                # Send separate message for each bet type
+                sent_count = 0
+                for market_type, bet_data in best_bets.items():
+                    try:
+                        message = generate_detailed_bet_message(bet_data, market_type)
+                        await self.send(message, chat_id)
+                        sent_count += 1
+                        
+                        # Small delay between messages to avoid rate limiting
+                        await asyncio.sleep(0.5)
+                        
+                    except Exception as e:
+                        logger.exception(f"Hiba a {market_type} üzenet küldésekor")
+                        await self.send(f"❌ Hiba a {market_type} üzenet küldésekor: {str(e)}", chat_id)
+                
+                # Summary message
+                await self.send(f"✅ Automatikus value bet kiválasztás kész! {sent_count} ajánlás elküldve.", chat_id)
+                
+            except Exception as e:
+                logger.exception("Automatikus value bet hiba")
+                await self.send(f"❌ Hiba az automatikus value bet kiválasztáskor: {str(e)}", chat_id)
 
         elif cmd == "/stop":
             await self.send("Leállítás kérve – viszlát!", chat_id)
@@ -4033,4 +5037,3 @@ if __name__ == "__main__":
     except Exception:
         logger.exception("Főprogram hiba – kilépés")
         raise
-
