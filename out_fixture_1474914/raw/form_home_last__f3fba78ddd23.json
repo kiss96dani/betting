@@ -1,0 +1,715 @@
+{
+  "get": "fixtures",
+  "parameters": {
+    "team": "2374",
+    "last": "10"
+  },
+  "errors": [],
+  "results": 10,
+  "paging": {
+    "current": 1,
+    "total": 1
+  },
+  "response": [
+    {
+      "fixture": {
+        "id": 1470054,
+        "referee": null,
+        "timezone": "UTC",
+        "date": "2025-09-20T22:00:00+00:00",
+        "timestamp": 1758405600,
+        "periods": {
+          "first": 1758405600,
+          "second": 1758409200
+        },
+        "venue": {
+          "id": 1646,
+          "name": "Estadio Raúl Saturnino Goyenola",
+          "city": "Tacuarembó"
+        },
+        "status": {
+          "long": "Match Finished",
+          "short": "FT",
+          "elapsed": 90,
+          "extra": 9
+        }
+      },
+      "league": {
+        "id": 269,
+        "name": "Segunda División",
+        "country": "Uruguay",
+        "logo": "https://media.api-sports.io/football/leagues/269.png",
+        "flag": "https://media.api-sports.io/flags/uy.svg",
+        "season": 2025,
+        "round": "2nd Phase - 21",
+        "standings": true
+      },
+      "teams": {
+        "home": {
+          "id": 2374,
+          "name": "Tacuarembo",
+          "logo": "https://media.api-sports.io/football/teams/2374.png",
+          "winner": null
+        },
+        "away": {
+          "id": 2368,
+          "name": "Central Espanol",
+          "logo": "https://media.api-sports.io/football/teams/2368.png",
+          "winner": null
+        }
+      },
+      "goals": {
+        "home": 0,
+        "away": 0
+      },
+      "score": {
+        "halftime": {
+          "home": 0,
+          "away": 0
+        },
+        "fulltime": {
+          "home": 0,
+          "away": 0
+        },
+        "extratime": {
+          "home": null,
+          "away": null
+        },
+        "penalty": {
+          "home": null,
+          "away": null
+        }
+      }
+    },
+    {
+      "fixture": {
+        "id": 1466757,
+        "referee": "Augusto Olmos",
+        "timezone": "UTC",
+        "date": "2025-09-14T14:00:00+00:00",
+        "timestamp": 1757858400,
+        "periods": {
+          "first": 1757858400,
+          "second": 1757862000
+        },
+        "venue": {
+          "id": null,
+          "name": "Estadio Atilio Paiva Olivera",
+          "city": "Rivera"
+        },
+        "status": {
+          "long": "Match Finished",
+          "short": "FT",
+          "elapsed": 90,
+          "extra": null
+        }
+      },
+      "league": {
+        "id": 269,
+        "name": "Segunda División",
+        "country": "Uruguay",
+        "logo": "https://media.api-sports.io/football/leagues/269.png",
+        "flag": "https://media.api-sports.io/flags/uy.svg",
+        "season": 2025,
+        "round": "2nd Phase - 20",
+        "standings": true
+      },
+      "teams": {
+        "home": {
+          "id": 19326,
+          "name": "Artigas",
+          "logo": "https://media.api-sports.io/football/teams/19326.png",
+          "winner": null
+        },
+        "away": {
+          "id": 2374,
+          "name": "Tacuarembo",
+          "logo": "https://media.api-sports.io/football/teams/2374.png",
+          "winner": null
+        }
+      },
+      "goals": {
+        "home": 1,
+        "away": 1
+      },
+      "score": {
+        "halftime": {
+          "home": 1,
+          "away": 1
+        },
+        "fulltime": {
+          "home": 1,
+          "away": 1
+        },
+        "extratime": {
+          "home": null,
+          "away": null
+        },
+        "penalty": {
+          "home": null,
+          "away": null
+        }
+      }
+    },
+    {
+      "fixture": {
+        "id": 1466341,
+        "referee": null,
+        "timezone": "UTC",
+        "date": "2025-09-10T22:00:00+00:00",
+        "timestamp": 1757541600,
+        "periods": {
+          "first": 1757541600,
+          "second": 1757545200
+        },
+        "venue": {
+          "id": 1630,
+          "name": "Estadio Municipal Arquitecto Antonio Eleuterio Ubilla",
+          "city": "Melo"
+        },
+        "status": {
+          "long": "Match Finished",
+          "short": "FT",
+          "elapsed": 90,
+          "extra": 8
+        }
+      },
+      "league": {
+        "id": 930,
+        "name": "Copa Uruguay",
+        "country": "Uruguay",
+        "logo": "https://media.api-sports.io/football/leagues/930.png",
+        "flag": "https://media.api-sports.io/flags/uy.svg",
+        "season": 2025,
+        "round": "Round of 16",
+        "standings": false
+      },
+      "teams": {
+        "home": {
+          "id": 2369,
+          "name": "Cerro Largo",
+          "logo": "https://media.api-sports.io/football/teams/2369.png",
+          "winner": false
+        },
+        "away": {
+          "id": 2374,
+          "name": "Tacuarembo",
+          "logo": "https://media.api-sports.io/football/teams/2374.png",
+          "winner": true
+        }
+      },
+      "goals": {
+        "home": 0,
+        "away": 1
+      },
+      "score": {
+        "halftime": {
+          "home": 0,
+          "away": 0
+        },
+        "fulltime": {
+          "home": 0,
+          "away": 1
+        },
+        "extratime": {
+          "home": null,
+          "away": null
+        },
+        "penalty": {
+          "home": null,
+          "away": null
+        }
+      }
+    },
+    {
+      "fixture": {
+        "id": 1452910,
+        "referee": "Daniel Rodríguez",
+        "timezone": "UTC",
+        "date": "2025-09-07T18:30:00+00:00",
+        "timestamp": 1757269800,
+        "periods": {
+          "first": 1757269800,
+          "second": 1757273400
+        },
+        "venue": {
+          "id": 1626,
+          "name": "Complejo Deportivo Rentistas",
+          "city": "Montevideo"
+        },
+        "status": {
+          "long": "Match Finished",
+          "short": "FT",
+          "elapsed": 90,
+          "extra": 5
+        }
+      },
+      "league": {
+        "id": 269,
+        "name": "Segunda División",
+        "country": "Uruguay",
+        "logo": "https://media.api-sports.io/football/leagues/269.png",
+        "flag": "https://media.api-sports.io/flags/uy.svg",
+        "season": 2025,
+        "round": "2nd Phase - 19",
+        "standings": true
+      },
+      "teams": {
+        "home": {
+          "id": 2371,
+          "name": "Rentistas",
+          "logo": "https://media.api-sports.io/football/teams/2371.png",
+          "winner": true
+        },
+        "away": {
+          "id": 2374,
+          "name": "Tacuarembo",
+          "logo": "https://media.api-sports.io/football/teams/2374.png",
+          "winner": false
+        }
+      },
+      "goals": {
+        "home": 3,
+        "away": 1
+      },
+      "score": {
+        "halftime": {
+          "home": 1,
+          "away": 0
+        },
+        "fulltime": {
+          "home": 3,
+          "away": 1
+        },
+        "extratime": {
+          "home": null,
+          "away": null
+        },
+        "penalty": {
+          "home": null,
+          "away": null
+        }
+      }
+    },
+    {
+      "fixture": {
+        "id": 1449715,
+        "referee": "Felipe Vikonis",
+        "timezone": "UTC",
+        "date": "2025-08-30T22:30:00+00:00",
+        "timestamp": 1756593000,
+        "periods": {
+          "first": 1756593000,
+          "second": 1756596600
+        },
+        "venue": {
+          "id": 1646,
+          "name": "Estadio Raúl Saturnino Goyenola",
+          "city": "Tacuarembó"
+        },
+        "status": {
+          "long": "Match Finished",
+          "short": "FT",
+          "elapsed": 90,
+          "extra": 8
+        }
+      },
+      "league": {
+        "id": 269,
+        "name": "Segunda División",
+        "country": "Uruguay",
+        "logo": "https://media.api-sports.io/football/leagues/269.png",
+        "flag": "https://media.api-sports.io/flags/uy.svg",
+        "season": 2025,
+        "round": "2nd Phase - 18",
+        "standings": true
+      },
+      "teams": {
+        "home": {
+          "id": 2374,
+          "name": "Tacuarembo",
+          "logo": "https://media.api-sports.io/football/teams/2374.png",
+          "winner": null
+        },
+        "away": {
+          "id": 18295,
+          "name": "La Luz",
+          "logo": "https://media.api-sports.io/football/teams/18295.png",
+          "winner": null
+        }
+      },
+      "goals": {
+        "home": 1,
+        "away": 1
+      },
+      "score": {
+        "halftime": {
+          "home": 1,
+          "away": 1
+        },
+        "fulltime": {
+          "home": 1,
+          "away": 1
+        },
+        "extratime": {
+          "home": null,
+          "away": null
+        },
+        "penalty": {
+          "home": null,
+          "away": null
+        }
+      }
+    },
+    {
+      "fixture": {
+        "id": 1447020,
+        "referee": null,
+        "timezone": "UTC",
+        "date": "2025-08-27T23:30:00+00:00",
+        "timestamp": 1756337400,
+        "periods": {
+          "first": 1756337400,
+          "second": 1756341000
+        },
+        "venue": {
+          "id": null,
+          "name": null,
+          "city": null
+        },
+        "status": {
+          "long": "Match Finished",
+          "short": "PEN",
+          "elapsed": 120,
+          "extra": null
+        }
+      },
+      "league": {
+        "id": 930,
+        "name": "Copa Uruguay",
+        "country": "Uruguay",
+        "logo": "https://media.api-sports.io/football/leagues/930.png",
+        "flag": "https://media.api-sports.io/flags/uy.svg",
+        "season": 2025,
+        "round": "Round of 32",
+        "standings": false
+      },
+      "teams": {
+        "home": {
+          "id": 823,
+          "name": "San Carlos",
+          "logo": "https://media.api-sports.io/football/teams/823.png",
+          "winner": false
+        },
+        "away": {
+          "id": 2374,
+          "name": "Tacuarembo",
+          "logo": "https://media.api-sports.io/football/teams/2374.png",
+          "winner": true
+        }
+      },
+      "goals": {
+        "home": 1,
+        "away": 1
+      },
+      "score": {
+        "halftime": {
+          "home": 1,
+          "away": 1
+        },
+        "fulltime": {
+          "home": 1,
+          "away": 1
+        },
+        "extratime": {
+          "home": null,
+          "away": null
+        },
+        "penalty": {
+          "home": 3,
+          "away": 4
+        }
+      }
+    },
+    {
+      "fixture": {
+        "id": 1442532,
+        "referee": "Anahí Fernández",
+        "timezone": "UTC",
+        "date": "2025-08-24T13:00:00+00:00",
+        "timestamp": 1756040400,
+        "periods": {
+          "first": 1756040400,
+          "second": 1756044000
+        },
+        "venue": {
+          "id": 1628,
+          "name": "Parque Maracaná",
+          "city": "Montevideo"
+        },
+        "status": {
+          "long": "Match Finished",
+          "short": "FT",
+          "elapsed": 90,
+          "extra": 7
+        }
+      },
+      "league": {
+        "id": 269,
+        "name": "Segunda División",
+        "country": "Uruguay",
+        "logo": "https://media.api-sports.io/football/leagues/269.png",
+        "flag": "https://media.api-sports.io/flags/uy.svg",
+        "season": 2025,
+        "round": "2nd Phase - 17",
+        "standings": true
+      },
+      "teams": {
+        "home": {
+          "id": 2367,
+          "name": "Cerrito",
+          "logo": "https://media.api-sports.io/football/teams/2367.png",
+          "winner": null
+        },
+        "away": {
+          "id": 2374,
+          "name": "Tacuarembo",
+          "logo": "https://media.api-sports.io/football/teams/2374.png",
+          "winner": null
+        }
+      },
+      "goals": {
+        "home": 1,
+        "away": 1
+      },
+      "score": {
+        "halftime": {
+          "home": 1,
+          "away": 0
+        },
+        "fulltime": {
+          "home": 1,
+          "away": 1
+        },
+        "extratime": {
+          "home": null,
+          "away": null
+        },
+        "penalty": {
+          "home": null,
+          "away": null
+        }
+      }
+    },
+    {
+      "fixture": {
+        "id": 1437225,
+        "referee": "Andrés Martínez",
+        "timezone": "UTC",
+        "date": "2025-08-20T22:30:00+00:00",
+        "timestamp": 1755729000,
+        "periods": {
+          "first": 1755729000,
+          "second": 1755732600
+        },
+        "venue": {
+          "id": 1646,
+          "name": "Estadio Raúl Saturnino Goyenola",
+          "city": "Tacuarembó"
+        },
+        "status": {
+          "long": "Match Finished",
+          "short": "FT",
+          "elapsed": 90,
+          "extra": 12
+        }
+      },
+      "league": {
+        "id": 269,
+        "name": "Segunda División",
+        "country": "Uruguay",
+        "logo": "https://media.api-sports.io/football/leagues/269.png",
+        "flag": "https://media.api-sports.io/flags/uy.svg",
+        "season": 2025,
+        "round": "2nd Phase - 16",
+        "standings": true
+      },
+      "teams": {
+        "home": {
+          "id": 2374,
+          "name": "Tacuarembo",
+          "logo": "https://media.api-sports.io/football/teams/2374.png",
+          "winner": null
+        },
+        "away": {
+          "id": 15628,
+          "name": "Colón",
+          "logo": "https://media.api-sports.io/football/teams/15628.png",
+          "winner": null
+        }
+      },
+      "goals": {
+        "home": 2,
+        "away": 2
+      },
+      "score": {
+        "halftime": {
+          "home": 1,
+          "away": 0
+        },
+        "fulltime": {
+          "home": 2,
+          "away": 2
+        },
+        "extratime": {
+          "home": null,
+          "away": null
+        },
+        "penalty": {
+          "home": null,
+          "away": null
+        }
+      }
+    },
+    {
+      "fixture": {
+        "id": 1434296,
+        "referee": "Eduardo Varela",
+        "timezone": "UTC",
+        "date": "2025-08-15T21:00:00+00:00",
+        "timestamp": 1755291600,
+        "periods": {
+          "first": 1755291600,
+          "second": 1755295200
+        },
+        "venue": {
+          "id": 1633,
+          "name": "Estadio Domingo Burgueño Miguel",
+          "city": "Maldonado"
+        },
+        "status": {
+          "long": "Match Finished",
+          "short": "FT",
+          "elapsed": 90,
+          "extra": 10
+        }
+      },
+      "league": {
+        "id": 269,
+        "name": "Segunda División",
+        "country": "Uruguay",
+        "logo": "https://media.api-sports.io/football/leagues/269.png",
+        "flag": "https://media.api-sports.io/flags/uy.svg",
+        "season": 2025,
+        "round": "2nd Phase - 15",
+        "standings": true
+      },
+      "teams": {
+        "home": {
+          "id": 2370,
+          "name": "Deportivo Maldonado",
+          "logo": "https://media.api-sports.io/football/teams/2370.png",
+          "winner": true
+        },
+        "away": {
+          "id": 2374,
+          "name": "Tacuarembo",
+          "logo": "https://media.api-sports.io/football/teams/2374.png",
+          "winner": false
+        }
+      },
+      "goals": {
+        "home": 2,
+        "away": 0
+      },
+      "score": {
+        "halftime": {
+          "home": 0,
+          "away": 0
+        },
+        "fulltime": {
+          "home": 2,
+          "away": 0
+        },
+        "extratime": {
+          "home": null,
+          "away": null
+        },
+        "penalty": {
+          "home": null,
+          "away": null
+        }
+      }
+    },
+    {
+      "fixture": {
+        "id": 1424384,
+        "referee": "Federico Modernell",
+        "timezone": "UTC",
+        "date": "2025-08-10T18:30:00+00:00",
+        "timestamp": 1754850600,
+        "periods": {
+          "first": 1754850600,
+          "second": 1754854200
+        },
+        "venue": {
+          "id": 1646,
+          "name": "Estadio Raúl Saturnino Goyenola",
+          "city": "Tacuarembó"
+        },
+        "status": {
+          "long": "Match Finished",
+          "short": "FT",
+          "elapsed": 90,
+          "extra": 4
+        }
+      },
+      "league": {
+        "id": 269,
+        "name": "Segunda División",
+        "country": "Uruguay",
+        "logo": "https://media.api-sports.io/football/leagues/269.png",
+        "flag": "https://media.api-sports.io/flags/uy.svg",
+        "season": 2025,
+        "round": "2nd Phase - 14",
+        "standings": true
+      },
+      "teams": {
+        "home": {
+          "id": 2374,
+          "name": "Tacuarembo",
+          "logo": "https://media.api-sports.io/football/teams/2374.png",
+          "winner": null
+        },
+        "away": {
+          "id": 2376,
+          "name": "Oriental",
+          "logo": "https://media.api-sports.io/football/teams/2376.png",
+          "winner": null
+        }
+      },
+      "goals": {
+        "home": 1,
+        "away": 1
+      },
+      "score": {
+        "halftime": {
+          "home": 0,
+          "away": 0
+        },
+        "fulltime": {
+          "home": 1,
+          "away": 1
+        },
+        "extratime": {
+          "home": null,
+          "away": null
+        },
+        "penalty": {
+          "home": null,
+          "away": null
+        }
+      }
+    }
+  ]
+}

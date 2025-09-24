@@ -1,0 +1,1415 @@
+{
+  "get": "fixtures",
+  "parameters": {
+    "team": "2348",
+    "last": "20"
+  },
+  "errors": [],
+  "results": 20,
+  "paging": {
+    "current": 1,
+    "total": 1
+  },
+  "response": [
+    {
+      "fixture": {
+        "id": 1457299,
+        "referee": null,
+        "timezone": "UTC",
+        "date": "2025-09-21T21:30:00+00:00",
+        "timestamp": 1758490200,
+        "periods": {
+          "first": 1758490200,
+          "second": 1758493800
+        },
+        "venue": {
+          "id": 1640,
+          "name": "Estadio Campeón del Siglo",
+          "city": "Montevideo"
+        },
+        "status": {
+          "long": "Match Finished",
+          "short": "FT",
+          "elapsed": 90,
+          "extra": 3
+        }
+      },
+      "league": {
+        "id": 270,
+        "name": "Primera División - Clausura",
+        "country": "Uruguay",
+        "logo": "https://media.api-sports.io/football/leagues/270.png",
+        "flag": "https://media.api-sports.io/flags/uy.svg",
+        "season": 2025,
+        "round": "Clausura - 8",
+        "standings": true
+      },
+      "teams": {
+        "home": {
+          "id": 2348,
+          "name": "Penarol",
+          "logo": "https://media.api-sports.io/football/teams/2348.png",
+          "winner": true
+        },
+        "away": {
+          "id": 2353,
+          "name": "Juventud",
+          "logo": "https://media.api-sports.io/football/teams/2353.png",
+          "winner": false
+        }
+      },
+      "goals": {
+        "home": 1,
+        "away": 0
+      },
+      "score": {
+        "halftime": {
+          "home": 0,
+          "away": 0
+        },
+        "fulltime": {
+          "home": 1,
+          "away": 0
+        },
+        "extratime": {
+          "home": null,
+          "away": null
+        },
+        "penalty": {
+          "home": null,
+          "away": null
+        }
+      }
+    },
+    {
+      "fixture": {
+        "id": 1457285,
+        "referee": "Gustavo Tejera, Uruguay",
+        "timezone": "UTC",
+        "date": "2025-09-13T18:30:00+00:00",
+        "timestamp": 1757788200,
+        "periods": {
+          "first": 1757788200,
+          "second": 1757791800
+        },
+        "venue": {
+          "id": 1636,
+          "name": "Estadio Belvedere",
+          "city": "Montevideo"
+        },
+        "status": {
+          "long": "Match Finished",
+          "short": "FT",
+          "elapsed": 90,
+          "extra": 5
+        }
+      },
+      "league": {
+        "id": 270,
+        "name": "Primera División - Clausura",
+        "country": "Uruguay",
+        "logo": "https://media.api-sports.io/football/leagues/270.png",
+        "flag": "https://media.api-sports.io/flags/uy.svg",
+        "season": 2025,
+        "round": "Clausura - 7",
+        "standings": true
+      },
+      "teams": {
+        "home": {
+          "id": 2358,
+          "name": "Liverpool Montevideo",
+          "logo": "https://media.api-sports.io/football/teams/2358.png",
+          "winner": null
+        },
+        "away": {
+          "id": 2348,
+          "name": "Penarol",
+          "logo": "https://media.api-sports.io/football/teams/2348.png",
+          "winner": null
+        }
+      },
+      "goals": {
+        "home": 2,
+        "away": 2
+      },
+      "score": {
+        "halftime": {
+          "home": 2,
+          "away": 1
+        },
+        "fulltime": {
+          "home": 2,
+          "away": 2
+        },
+        "extratime": {
+          "home": null,
+          "away": null
+        },
+        "penalty": {
+          "home": null,
+          "away": null
+        }
+      }
+    },
+    {
+      "fixture": {
+        "id": 1466342,
+        "referee": null,
+        "timezone": "UTC",
+        "date": "2025-09-10T23:30:00+00:00",
+        "timestamp": 1757547000,
+        "periods": {
+          "first": 1757547000,
+          "second": 1757550600
+        },
+        "venue": {
+          "id": 1624,
+          "name": "Estadio Centenario",
+          "city": "Montevideo"
+        },
+        "status": {
+          "long": "Match Finished",
+          "short": "FT",
+          "elapsed": 90,
+          "extra": 5
+        }
+      },
+      "league": {
+        "id": 930,
+        "name": "Copa Uruguay",
+        "country": "Uruguay",
+        "logo": "https://media.api-sports.io/football/leagues/930.png",
+        "flag": "https://media.api-sports.io/flags/uy.svg",
+        "season": 2025,
+        "round": "Round of 16",
+        "standings": false
+      },
+      "teams": {
+        "home": {
+          "id": 2348,
+          "name": "Penarol",
+          "logo": "https://media.api-sports.io/football/teams/2348.png",
+          "winner": true
+        },
+        "away": {
+          "id": 2358,
+          "name": "Liverpool Montevideo",
+          "logo": "https://media.api-sports.io/football/teams/2358.png",
+          "winner": false
+        }
+      },
+      "goals": {
+        "home": 2,
+        "away": 1
+      },
+      "score": {
+        "halftime": {
+          "home": 1,
+          "away": 1
+        },
+        "fulltime": {
+          "home": 2,
+          "away": 1
+        },
+        "extratime": {
+          "home": null,
+          "away": null
+        },
+        "penalty": {
+          "home": null,
+          "away": null
+        }
+      }
+    },
+    {
+      "fixture": {
+        "id": 1440259,
+        "referee": "Hernan Heras, Uruguay",
+        "timezone": "UTC",
+        "date": "2025-09-06T21:00:00+00:00",
+        "timestamp": 1757192400,
+        "periods": {
+          "first": 1757192400,
+          "second": 1757196000
+        },
+        "venue": {
+          "id": 1640,
+          "name": "Estadio Campeón del Siglo",
+          "city": "Montevideo"
+        },
+        "status": {
+          "long": "Match Finished",
+          "short": "FT",
+          "elapsed": 90,
+          "extra": 5
+        }
+      },
+      "league": {
+        "id": 270,
+        "name": "Primera División - Clausura",
+        "country": "Uruguay",
+        "logo": "https://media.api-sports.io/football/leagues/270.png",
+        "flag": "https://media.api-sports.io/flags/uy.svg",
+        "season": 2025,
+        "round": "Clausura - 6",
+        "standings": true
+      },
+      "teams": {
+        "home": {
+          "id": 2348,
+          "name": "Penarol",
+          "logo": "https://media.api-sports.io/football/teams/2348.png",
+          "winner": true
+        },
+        "away": {
+          "id": 2355,
+          "name": "Plaza Colonia",
+          "logo": "https://media.api-sports.io/football/teams/2355.png",
+          "winner": false
+        }
+      },
+      "goals": {
+        "home": 1,
+        "away": 0
+      },
+      "score": {
+        "halftime": {
+          "home": 0,
+          "away": 0
+        },
+        "fulltime": {
+          "home": 1,
+          "away": 0
+        },
+        "extratime": {
+          "home": null,
+          "away": null
+        },
+        "penalty": {
+          "home": null,
+          "away": null
+        }
+      }
+    },
+    {
+      "fixture": {
+        "id": 1440254,
+        "referee": "Esteban Ostojich, Uruguay",
+        "timezone": "UTC",
+        "date": "2025-08-31T21:00:00+00:00",
+        "timestamp": 1756674000,
+        "periods": {
+          "first": 1756674000,
+          "second": 1756677600
+        },
+        "venue": {
+          "id": 1638,
+          "name": "Parque Alfredo Víctor Viera",
+          "city": "Montevideo"
+        },
+        "status": {
+          "long": "Match Finished",
+          "short": "FT",
+          "elapsed": 90,
+          "extra": 4
+        }
+      },
+      "league": {
+        "id": 270,
+        "name": "Primera División - Clausura",
+        "country": "Uruguay",
+        "logo": "https://media.api-sports.io/football/leagues/270.png",
+        "flag": "https://media.api-sports.io/flags/uy.svg",
+        "season": 2025,
+        "round": "Clausura - 5",
+        "standings": true
+      },
+      "teams": {
+        "home": {
+          "id": 2359,
+          "name": "Racing Montevideo",
+          "logo": "https://media.api-sports.io/football/teams/2359.png",
+          "winner": false
+        },
+        "away": {
+          "id": 2348,
+          "name": "Penarol",
+          "logo": "https://media.api-sports.io/football/teams/2348.png",
+          "winner": true
+        }
+      },
+      "goals": {
+        "home": 1,
+        "away": 4
+      },
+      "score": {
+        "halftime": {
+          "home": 1,
+          "away": 2
+        },
+        "fulltime": {
+          "home": 1,
+          "away": 4
+        },
+        "extratime": {
+          "home": null,
+          "away": null
+        },
+        "penalty": {
+          "home": null,
+          "away": null
+        }
+      }
+    },
+    {
+      "fixture": {
+        "id": 1447019,
+        "referee": null,
+        "timezone": "UTC",
+        "date": "2025-08-27T23:30:00+00:00",
+        "timestamp": 1756337400,
+        "periods": {
+          "first": 1756337400,
+          "second": 1756341000
+        },
+        "venue": {
+          "id": null,
+          "name": null,
+          "city": null
+        },
+        "status": {
+          "long": "Match Finished",
+          "short": "FT",
+          "elapsed": 90,
+          "extra": 4
+        }
+      },
+      "league": {
+        "id": 930,
+        "name": "Copa Uruguay",
+        "country": "Uruguay",
+        "logo": "https://media.api-sports.io/football/leagues/930.png",
+        "flag": "https://media.api-sports.io/flags/uy.svg",
+        "season": 2025,
+        "round": "Round of 32",
+        "standings": false
+      },
+      "teams": {
+        "home": {
+          "id": 19349,
+          "name": "Río Negro",
+          "logo": "https://media.api-sports.io/football/teams/19349.png",
+          "winner": false
+        },
+        "away": {
+          "id": 2348,
+          "name": "Penarol",
+          "logo": "https://media.api-sports.io/football/teams/2348.png",
+          "winner": true
+        }
+      },
+      "goals": {
+        "home": 0,
+        "away": 3
+      },
+      "score": {
+        "halftime": {
+          "home": 0,
+          "away": 1
+        },
+        "fulltime": {
+          "home": 0,
+          "away": 3
+        },
+        "extratime": {
+          "home": null,
+          "away": null
+        },
+        "penalty": {
+          "home": null,
+          "away": null
+        }
+      }
+    },
+    {
+      "fixture": {
+        "id": 1424396,
+        "referee": "Leodan Frankin Gonzalez Cabrera, Uruguay",
+        "timezone": "UTC",
+        "date": "2025-08-24T21:00:00+00:00",
+        "timestamp": 1756069200,
+        "periods": {
+          "first": 1756069200,
+          "second": 1756072800
+        },
+        "venue": {
+          "id": 1640,
+          "name": "Estadio Campeón del Siglo",
+          "city": "Montevideo"
+        },
+        "status": {
+          "long": "Match Finished",
+          "short": "FT",
+          "elapsed": 90,
+          "extra": 4
+        }
+      },
+      "league": {
+        "id": 270,
+        "name": "Primera División - Clausura",
+        "country": "Uruguay",
+        "logo": "https://media.api-sports.io/football/leagues/270.png",
+        "flag": "https://media.api-sports.io/flags/uy.svg",
+        "season": 2025,
+        "round": "Clausura - 4",
+        "standings": true
+      },
+      "teams": {
+        "home": {
+          "id": 2348,
+          "name": "Penarol",
+          "logo": "https://media.api-sports.io/football/teams/2348.png",
+          "winner": true
+        },
+        "away": {
+          "id": 2351,
+          "name": "CA River Plate",
+          "logo": "https://media.api-sports.io/football/teams/2351.png",
+          "winner": false
+        }
+      },
+      "goals": {
+        "home": 2,
+        "away": 0
+      },
+      "score": {
+        "halftime": {
+          "home": 1,
+          "away": 0
+        },
+        "fulltime": {
+          "home": 2,
+          "away": 0
+        },
+        "extratime": {
+          "home": null,
+          "away": null
+        },
+        "penalty": {
+          "home": null,
+          "away": null
+        }
+      }
+    },
+    {
+      "fixture": {
+        "id": 1377454,
+        "referee": "Wilmar Alexander Roldán Pérez",
+        "timezone": "UTC",
+        "date": "2025-08-20T00:30:00+00:00",
+        "timestamp": 1755649800,
+        "periods": {
+          "first": 1755649800,
+          "second": 1755653400
+        },
+        "venue": {
+          "id": 99,
+          "name": "Estadio Presidente Juan Domingo Perón",
+          "city": "Avellaneda, Provincia de Buenos Aires"
+        },
+        "status": {
+          "long": "Match Finished",
+          "short": "FT",
+          "elapsed": 90,
+          "extra": 8
+        }
+      },
+      "league": {
+        "id": 13,
+        "name": "CONMEBOL Libertadores",
+        "country": "World",
+        "logo": "https://media.api-sports.io/football/leagues/13.png",
+        "flag": null,
+        "season": 2025,
+        "round": "Round of 16",
+        "standings": true
+      },
+      "teams": {
+        "home": {
+          "id": 436,
+          "name": "Racing Club",
+          "logo": "https://media.api-sports.io/football/teams/436.png",
+          "winner": true
+        },
+        "away": {
+          "id": 2348,
+          "name": "Penarol",
+          "logo": "https://media.api-sports.io/football/teams/2348.png",
+          "winner": false
+        }
+      },
+      "goals": {
+        "home": 3,
+        "away": 1
+      },
+      "score": {
+        "halftime": {
+          "home": 1,
+          "away": 1
+        },
+        "fulltime": {
+          "home": 3,
+          "away": 1
+        },
+        "extratime": {
+          "home": null,
+          "away": null
+        },
+        "penalty": {
+          "home": null,
+          "away": null
+        }
+      }
+    },
+    {
+      "fixture": {
+        "id": 1424386,
+        "referee": "Gustavo Tejera, Uruguay",
+        "timezone": "UTC",
+        "date": "2025-08-15T23:00:00+00:00",
+        "timestamp": 1755298800,
+        "periods": {
+          "first": 1755298800,
+          "second": 1755302400
+        },
+        "venue": {
+          "id": 1625,
+          "name": "Estadio Campeones Olímpicos",
+          "city": "Ciudad de Florida"
+        },
+        "status": {
+          "long": "Match Finished",
+          "short": "FT",
+          "elapsed": 90,
+          "extra": 8
+        }
+      },
+      "league": {
+        "id": 270,
+        "name": "Primera División - Clausura",
+        "country": "Uruguay",
+        "logo": "https://media.api-sports.io/football/leagues/270.png",
+        "flag": "https://media.api-sports.io/flags/uy.svg",
+        "season": 2025,
+        "round": "Clausura - 3",
+        "standings": true
+      },
+      "teams": {
+        "home": {
+          "id": 2361,
+          "name": "Boston River",
+          "logo": "https://media.api-sports.io/football/teams/2361.png",
+          "winner": true
+        },
+        "away": {
+          "id": 2348,
+          "name": "Penarol",
+          "logo": "https://media.api-sports.io/football/teams/2348.png",
+          "winner": false
+        }
+      },
+      "goals": {
+        "home": 2,
+        "away": 1
+      },
+      "score": {
+        "halftime": {
+          "home": 1,
+          "away": 0
+        },
+        "fulltime": {
+          "home": 2,
+          "away": 1
+        },
+        "extratime": {
+          "home": null,
+          "away": null
+        },
+        "penalty": {
+          "home": null,
+          "away": null
+        }
+      }
+    },
+    {
+      "fixture": {
+        "id": 1377453,
+        "referee": "Raphael Claus",
+        "timezone": "UTC",
+        "date": "2025-08-13T00:30:00+00:00",
+        "timestamp": 1755045000,
+        "periods": {
+          "first": 1755045000,
+          "second": 1755048600
+        },
+        "venue": {
+          "id": 1640,
+          "name": "Estadio Campeón del Siglo",
+          "city": "Montevideo"
+        },
+        "status": {
+          "long": "Match Finished",
+          "short": "FT",
+          "elapsed": 90,
+          "extra": 5
+        }
+      },
+      "league": {
+        "id": 13,
+        "name": "CONMEBOL Libertadores",
+        "country": "World",
+        "logo": "https://media.api-sports.io/football/leagues/13.png",
+        "flag": null,
+        "season": 2025,
+        "round": "Round of 16",
+        "standings": true
+      },
+      "teams": {
+        "home": {
+          "id": 2348,
+          "name": "Penarol",
+          "logo": "https://media.api-sports.io/football/teams/2348.png",
+          "winner": true
+        },
+        "away": {
+          "id": 436,
+          "name": "Racing Club",
+          "logo": "https://media.api-sports.io/football/teams/436.png",
+          "winner": false
+        }
+      },
+      "goals": {
+        "home": 1,
+        "away": 0
+      },
+      "score": {
+        "halftime": {
+          "home": 0,
+          "away": 0
+        },
+        "fulltime": {
+          "home": 1,
+          "away": 0
+        },
+        "extratime": {
+          "home": null,
+          "away": null
+        },
+        "penalty": {
+          "home": null,
+          "away": null
+        }
+      }
+    },
+    {
+      "fixture": {
+        "id": 1414141,
+        "referee": "Javier Burgos, Uruguay",
+        "timezone": "UTC",
+        "date": "2025-08-09T18:00:00+00:00",
+        "timestamp": 1754762400,
+        "periods": {
+          "first": 1754762400,
+          "second": 1754766000
+        },
+        "venue": {
+          "id": 1640,
+          "name": "Estadio Campeón del Siglo",
+          "city": "Montevideo"
+        },
+        "status": {
+          "long": "Match Finished",
+          "short": "FT",
+          "elapsed": 90,
+          "extra": 5
+        }
+      },
+      "league": {
+        "id": 270,
+        "name": "Primera División - Clausura",
+        "country": "Uruguay",
+        "logo": "https://media.api-sports.io/football/leagues/270.png",
+        "flag": "https://media.api-sports.io/flags/uy.svg",
+        "season": 2025,
+        "round": "Clausura - 2",
+        "standings": true
+      },
+      "teams": {
+        "home": {
+          "id": 2348,
+          "name": "Penarol",
+          "logo": "https://media.api-sports.io/football/teams/2348.png",
+          "winner": true
+        },
+        "away": {
+          "id": 2356,
+          "name": "Club Nacional",
+          "logo": "https://media.api-sports.io/football/teams/2356.png",
+          "winner": false
+        }
+      },
+      "goals": {
+        "home": 3,
+        "away": 0
+      },
+      "score": {
+        "halftime": {
+          "home": 2,
+          "away": 0
+        },
+        "fulltime": {
+          "home": 3,
+          "away": 0
+        },
+        "extratime": {
+          "home": null,
+          "away": null
+        },
+        "penalty": {
+          "home": null,
+          "away": null
+        }
+      }
+    },
+    {
+      "fixture": {
+        "id": 1412416,
+        "referee": "Andres Matonte, Uruguay",
+        "timezone": "UTC",
+        "date": "2025-08-01T23:00:00+00:00",
+        "timestamp": 1754089200,
+        "periods": {
+          "first": 1754089200,
+          "second": 1754092800
+        },
+        "venue": {
+          "id": 1640,
+          "name": "Estadio Campeón del Siglo",
+          "city": "Montevideo"
+        },
+        "status": {
+          "long": "Match Finished",
+          "short": "FT",
+          "elapsed": 90,
+          "extra": null
+        }
+      },
+      "league": {
+        "id": 270,
+        "name": "Primera División - Clausura",
+        "country": "Uruguay",
+        "logo": "https://media.api-sports.io/football/leagues/270.png",
+        "flag": "https://media.api-sports.io/flags/uy.svg",
+        "season": 2025,
+        "round": "Clausura - 1",
+        "standings": true
+      },
+      "teams": {
+        "home": {
+          "id": 2348,
+          "name": "Penarol",
+          "logo": "https://media.api-sports.io/football/teams/2348.png",
+          "winner": true
+        },
+        "away": {
+          "id": 2363,
+          "name": "Progreso",
+          "logo": "https://media.api-sports.io/football/teams/2363.png",
+          "winner": false
+        }
+      },
+      "goals": {
+        "home": 2,
+        "away": 1
+      },
+      "score": {
+        "halftime": {
+          "home": 0,
+          "away": 1
+        },
+        "fulltime": {
+          "home": 2,
+          "away": 1
+        },
+        "extratime": {
+          "home": null,
+          "away": null
+        },
+        "penalty": {
+          "home": null,
+          "away": null
+        }
+      }
+    },
+    {
+      "fixture": {
+        "id": 1391400,
+        "referee": null,
+        "timezone": "UTC",
+        "date": "2025-07-06T18:00:00+00:00",
+        "timestamp": 1751824800,
+        "periods": {
+          "first": 1751824800,
+          "second": 1751828400
+        },
+        "venue": {
+          "id": null,
+          "name": "Estadio Centenario",
+          "city": null
+        },
+        "status": {
+          "long": "Match Finished",
+          "short": "PEN",
+          "elapsed": 120,
+          "extra": null
+        }
+      },
+      "league": {
+        "id": 268,
+        "name": "Primera División - Apertura",
+        "country": "Uruguay",
+        "logo": "https://media.api-sports.io/football/leagues/268.png",
+        "flag": "https://media.api-sports.io/flags/uy.svg",
+        "season": 2025,
+        "round": "Intermediate Round - Final",
+        "standings": true
+      },
+      "teams": {
+        "home": {
+          "id": 2348,
+          "name": "Penarol",
+          "logo": "https://media.api-sports.io/football/teams/2348.png",
+          "winner": true
+        },
+        "away": {
+          "id": 2356,
+          "name": "Club Nacional",
+          "logo": "https://media.api-sports.io/football/teams/2356.png",
+          "winner": false
+        }
+      },
+      "goals": {
+        "home": 0,
+        "away": 0
+      },
+      "score": {
+        "halftime": {
+          "home": 0,
+          "away": 0
+        },
+        "fulltime": {
+          "home": 0,
+          "away": 0
+        },
+        "extratime": {
+          "home": 0,
+          "away": 0
+        },
+        "penalty": {
+          "home": 5,
+          "away": 3
+        }
+      }
+    },
+    {
+      "fixture": {
+        "id": 1376038,
+        "referee": "Andres Matonte, Uruguay",
+        "timezone": "UTC",
+        "date": "2025-06-28T18:00:00+00:00",
+        "timestamp": 1751133600,
+        "periods": {
+          "first": 1751133600,
+          "second": 1751137200
+        },
+        "venue": {
+          "id": 1640,
+          "name": "Estadio Campeón del Siglo",
+          "city": "Montevideo"
+        },
+        "status": {
+          "long": "Match Finished",
+          "short": "FT",
+          "elapsed": 90,
+          "extra": 5
+        }
+      },
+      "league": {
+        "id": 268,
+        "name": "Primera División - Apertura",
+        "country": "Uruguay",
+        "logo": "https://media.api-sports.io/football/leagues/268.png",
+        "flag": "https://media.api-sports.io/flags/uy.svg",
+        "season": 2025,
+        "round": "Intermediate Round - 7",
+        "standings": true
+      },
+      "teams": {
+        "home": {
+          "id": 2348,
+          "name": "Penarol",
+          "logo": "https://media.api-sports.io/football/teams/2348.png",
+          "winner": true
+        },
+        "away": {
+          "id": 2362,
+          "name": "Cerro",
+          "logo": "https://media.api-sports.io/football/teams/2362.png",
+          "winner": false
+        }
+      },
+      "goals": {
+        "home": 2,
+        "away": 0
+      },
+      "score": {
+        "halftime": {
+          "home": 0,
+          "away": 0
+        },
+        "fulltime": {
+          "home": 2,
+          "away": 0
+        },
+        "extratime": {
+          "home": null,
+          "away": null
+        },
+        "penalty": {
+          "home": null,
+          "away": null
+        }
+      }
+    },
+    {
+      "fixture": {
+        "id": 1376029,
+        "referee": "Mathias De Armas, Uruguay",
+        "timezone": "UTC",
+        "date": "2025-06-22T20:30:00+00:00",
+        "timestamp": 1750624200,
+        "periods": {
+          "first": 1750624200,
+          "second": 1750627800
+        },
+        "venue": {
+          "id": 1640,
+          "name": "Estadio Campeón del Siglo",
+          "city": "Montevideo"
+        },
+        "status": {
+          "long": "Match Finished",
+          "short": "FT",
+          "elapsed": 90,
+          "extra": 5
+        }
+      },
+      "league": {
+        "id": 268,
+        "name": "Primera División - Apertura",
+        "country": "Uruguay",
+        "logo": "https://media.api-sports.io/football/leagues/268.png",
+        "flag": "https://media.api-sports.io/flags/uy.svg",
+        "season": 2025,
+        "round": "Intermediate Round - 6",
+        "standings": true
+      },
+      "teams": {
+        "home": {
+          "id": 2348,
+          "name": "Penarol",
+          "logo": "https://media.api-sports.io/football/teams/2348.png",
+          "winner": true
+        },
+        "away": {
+          "id": 2360,
+          "name": "Wanderers",
+          "logo": "https://media.api-sports.io/football/teams/2360.png",
+          "winner": false
+        }
+      },
+      "goals": {
+        "home": 2,
+        "away": 0
+      },
+      "score": {
+        "halftime": {
+          "home": 1,
+          "away": 0
+        },
+        "fulltime": {
+          "home": 2,
+          "away": 0
+        },
+        "extratime": {
+          "home": null,
+          "away": null
+        },
+        "penalty": {
+          "home": null,
+          "away": null
+        }
+      }
+    },
+    {
+      "fixture": {
+        "id": 1376023,
+        "referee": "Hernan Heras, Uruguay",
+        "timezone": "UTC",
+        "date": "2025-06-19T18:00:00+00:00",
+        "timestamp": 1750356000,
+        "periods": {
+          "first": 1750356000,
+          "second": 1750359600
+        },
+        "venue": {
+          "id": 1636,
+          "name": "Estadio Belvedere",
+          "city": "Montevideo"
+        },
+        "status": {
+          "long": "Match Finished",
+          "short": "FT",
+          "elapsed": 90,
+          "extra": 9
+        }
+      },
+      "league": {
+        "id": 268,
+        "name": "Primera División - Apertura",
+        "country": "Uruguay",
+        "logo": "https://media.api-sports.io/football/leagues/268.png",
+        "flag": "https://media.api-sports.io/flags/uy.svg",
+        "season": 2025,
+        "round": "Intermediate Round - 5",
+        "standings": true
+      },
+      "teams": {
+        "home": {
+          "id": 2358,
+          "name": "Liverpool Montevideo",
+          "logo": "https://media.api-sports.io/football/teams/2358.png",
+          "winner": true
+        },
+        "away": {
+          "id": 2348,
+          "name": "Penarol",
+          "logo": "https://media.api-sports.io/football/teams/2348.png",
+          "winner": false
+        }
+      },
+      "goals": {
+        "home": 3,
+        "away": 2
+      },
+      "score": {
+        "halftime": {
+          "home": 0,
+          "away": 1
+        },
+        "fulltime": {
+          "home": 3,
+          "away": 2
+        },
+        "extratime": {
+          "home": null,
+          "away": null
+        },
+        "penalty": {
+          "home": null,
+          "away": null
+        }
+      }
+    },
+    {
+      "fixture": {
+        "id": 1376012,
+        "referee": "Javier Feres, Uruguay",
+        "timezone": "UTC",
+        "date": "2025-06-15T18:00:00+00:00",
+        "timestamp": 1750010400,
+        "periods": {
+          "first": 1750010400,
+          "second": 1750014000
+        },
+        "venue": {
+          "id": 1645,
+          "name": "Parque Federico Omar Saroldi",
+          "city": "Montevideo"
+        },
+        "status": {
+          "long": "Match Finished",
+          "short": "FT",
+          "elapsed": 90,
+          "extra": 6
+        }
+      },
+      "league": {
+        "id": 268,
+        "name": "Primera División - Apertura",
+        "country": "Uruguay",
+        "logo": "https://media.api-sports.io/football/leagues/268.png",
+        "flag": "https://media.api-sports.io/flags/uy.svg",
+        "season": 2025,
+        "round": "Intermediate Round - 4",
+        "standings": true
+      },
+      "teams": {
+        "home": {
+          "id": 2351,
+          "name": "CA River Plate",
+          "logo": "https://media.api-sports.io/football/teams/2351.png",
+          "winner": false
+        },
+        "away": {
+          "id": 2348,
+          "name": "Penarol",
+          "logo": "https://media.api-sports.io/football/teams/2348.png",
+          "winner": true
+        }
+      },
+      "goals": {
+        "home": 1,
+        "away": 3
+      },
+      "score": {
+        "halftime": {
+          "home": 0,
+          "away": 2
+        },
+        "fulltime": {
+          "home": 1,
+          "away": 3
+        },
+        "extratime": {
+          "home": null,
+          "away": null
+        },
+        "penalty": {
+          "home": null,
+          "away": null
+        }
+      }
+    },
+    {
+      "fixture": {
+        "id": 1376007,
+        "referee": "Andres Matonte, Uruguay",
+        "timezone": "UTC",
+        "date": "2025-06-07T23:00:00+00:00",
+        "timestamp": 1749337200,
+        "periods": {
+          "first": 1749337200,
+          "second": 1749340800
+        },
+        "venue": {
+          "id": 1640,
+          "name": "Estadio Campeón del Siglo",
+          "city": "Montevideo"
+        },
+        "status": {
+          "long": "Match Finished",
+          "short": "FT",
+          "elapsed": 90,
+          "extra": 3
+        }
+      },
+      "league": {
+        "id": 268,
+        "name": "Primera División - Apertura",
+        "country": "Uruguay",
+        "logo": "https://media.api-sports.io/football/leagues/268.png",
+        "flag": "https://media.api-sports.io/flags/uy.svg",
+        "season": 2025,
+        "round": "Intermediate Round - 3",
+        "standings": true
+      },
+      "teams": {
+        "home": {
+          "id": 2348,
+          "name": "Penarol",
+          "logo": "https://media.api-sports.io/football/teams/2348.png",
+          "winner": true
+        },
+        "away": {
+          "id": 2350,
+          "name": "Defensor Sporting",
+          "logo": "https://media.api-sports.io/football/teams/2350.png",
+          "winner": false
+        }
+      },
+      "goals": {
+        "home": 3,
+        "away": 0
+      },
+      "score": {
+        "halftime": {
+          "home": 1,
+          "away": 0
+        },
+        "fulltime": {
+          "home": 3,
+          "away": 0
+        },
+        "extratime": {
+          "home": null,
+          "away": null
+        },
+        "penalty": {
+          "home": null,
+          "away": null
+        }
+      }
+    },
+    {
+      "fixture": {
+        "id": 1375997,
+        "referee": "Javier Burgos, Uruguay",
+        "timezone": "UTC",
+        "date": "2025-06-01T20:30:00+00:00",
+        "timestamp": 1748809800,
+        "periods": {
+          "first": 1748809800,
+          "second": 1748813400
+        },
+        "venue": {
+          "id": 1630,
+          "name": "Estadio Municipal Arquitecto Antonio Eleuterio Ubilla",
+          "city": "Melo"
+        },
+        "status": {
+          "long": "Match Finished",
+          "short": "FT",
+          "elapsed": 90,
+          "extra": 6
+        }
+      },
+      "league": {
+        "id": 268,
+        "name": "Primera División - Apertura",
+        "country": "Uruguay",
+        "logo": "https://media.api-sports.io/football/leagues/268.png",
+        "flag": "https://media.api-sports.io/flags/uy.svg",
+        "season": 2025,
+        "round": "Intermediate Round - 2",
+        "standings": true
+      },
+      "teams": {
+        "home": {
+          "id": 2369,
+          "name": "Cerro Largo",
+          "logo": "https://media.api-sports.io/football/teams/2369.png",
+          "winner": null
+        },
+        "away": {
+          "id": 2348,
+          "name": "Penarol",
+          "logo": "https://media.api-sports.io/football/teams/2348.png",
+          "winner": null
+        }
+      },
+      "goals": {
+        "home": 1,
+        "away": 1
+      },
+      "score": {
+        "halftime": {
+          "home": 1,
+          "away": 1
+        },
+        "fulltime": {
+          "home": 1,
+          "away": 1
+        },
+        "extratime": {
+          "home": null,
+          "away": null
+        },
+        "penalty": {
+          "home": null,
+          "away": null
+        }
+      }
+    },
+    {
+      "fixture": {
+        "id": 1362004,
+        "referee": "Anderson Daronco",
+        "timezone": "UTC",
+        "date": "2025-05-29T22:00:00+00:00",
+        "timestamp": 1748556000,
+        "periods": {
+          "first": 1748556000,
+          "second": 1748559600
+        },
+        "venue": {
+          "id": 1640,
+          "name": "Estadio Campeón del Siglo",
+          "city": "Montevideo"
+        },
+        "status": {
+          "long": "Match Finished",
+          "short": "FT",
+          "elapsed": 90,
+          "extra": 5
+        }
+      },
+      "league": {
+        "id": 13,
+        "name": "CONMEBOL Libertadores",
+        "country": "World",
+        "logo": "https://media.api-sports.io/football/leagues/13.png",
+        "flag": null,
+        "season": 2025,
+        "round": "Group Stage - 6",
+        "standings": true
+      },
+      "teams": {
+        "home": {
+          "id": 2348,
+          "name": "Penarol",
+          "logo": "https://media.api-sports.io/football/teams/2348.png",
+          "winner": null
+        },
+        "away": {
+          "id": 438,
+          "name": "Velez Sarsfield",
+          "logo": "https://media.api-sports.io/football/teams/438.png",
+          "winner": null
+        }
+      },
+      "goals": {
+        "home": 0,
+        "away": 0
+      },
+      "score": {
+        "halftime": {
+          "home": 0,
+          "away": 0
+        },
+        "fulltime": {
+          "home": 0,
+          "away": 0
+        },
+        "extratime": {
+          "home": null,
+          "away": null
+        },
+        "penalty": {
+          "home": null,
+          "away": null
+        }
+      }
+    }
+  ]
+}

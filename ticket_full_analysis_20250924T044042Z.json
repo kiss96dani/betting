@@ -1,0 +1,924 @@
+{
+  "generated_at": "2025-09-24T04:40:42.387585+00:00",
+  "local_tz": "Europe/Budapest",
+  "tippmix_enabled": true,
+  "tickets": {
+    "x1x2": {
+      "fixture_id": 1394438,
+      "league_id": 203,
+      "league_tier": "TIER1B",
+      "market": "1X2",
+      "selection": "HOME",
+      "edge": 0.4582,
+      "odds": 3.75,
+      "model_prob": 0.3888,
+      "kickoff_utc": "2025-09-24T17:00:00+00:00",
+      "rationale": "🎯 TIPP: Hazai győzelem (Végeredmény)\n📊 Elemzés: A modellünk 38.9% valószínűséget ad erre az eredményre, míg a piac 25.5%-ot ár be. \n📈 Értékítélet: Kiváló value bet (45.8% edge), bizalmi szint: Közepes\n⚽ Liga státusz: 🌟 TOP liga (tier alapján): Süper Lig (tier: TIER1B)\n🔢 Gólvárakozás: Hazai 1.30, Vendég 1.30\n💪 Erőviszony: Vendég előny (-0.13)\n🧠 Modell: Ensemble algoritmus\n\n📋 Technikai adatok: Piac=1X2 | Pick=HOME | Model=0.3888 | Piac=0.2549 | Diff=+0.1339 | Odds=3.75 | Edge=45.8% | RawEdge=+0.4582 | AdjDiff=+0.1339 | Z=+0.31 | λH=1.30 | λA=1.30 | RatingDiff=-0.126 | Ens=Y | Qual=STRICT | DiffTol=0.15 | Notes=Ticket strict",
+      "home_name": "Kayserispor",
+      "away_name": "Besiktas",
+      "league_name": "Süper Lig",
+      "league_country": "Turkey",
+      "venue_name": "RHG Enertürk Enerji Stadyumu",
+      "venue_city": "Kayseri",
+      "kickoff_local": "2025-09-24 19:00",
+      "selection_label": "Hazai győzelem"
+    },
+    "btts": {
+      "fixture_id": 1466752,
+      "league_id": 237,
+      "league_tier": "OTHER",
+      "market": "BTTS",
+      "selection": "NO",
+      "edge": 0.2845,
+      "odds": 1.85,
+      "model_prob": 0.6943,
+      "kickoff_utc": "2025-09-24T12:00:00+00:00",
+      "rationale": "🎯 TIPP: Nem (Mindkét csapat gólokat szerez)\n📊 Elemzés: A modellünk 69.4% valószínűséget ad erre az eredményre, míg a piac 49.9%-ot ár be. \n📈 Értékítélet: Kiváló value bet (28.5% edge), bizalmi szint: Magas\n⚽ Liga státusz: ⚪ Nem TOP liga: Cup\n🔢 Gólvárakozás: Hazai 1.50, Vendég 0.50\n💪 Erőviszony: Vendég előny (-2.60)\n🧠 Modell: Ensemble algoritmus\n\n📋 Technikai adatok: Piac=BTTS | Pick=NO | Model=0.6943 | Piac=0.4986 | Diff=+0.1957 | Odds=1.85 | Edge=28.5% | RawEdge=+0.2845 | AdjDiff=+0.1957 | Z=+0.39 | λH=1.50 | λA=0.50 | RatingDiff=-2.600 | Ens=Y | Qual=STRICT | DiffTol=0.22 | Notes=Ticket strict",
+      "home_name": "Astrakhan",
+      "away_name": "Chernomorets",
+      "league_name": "Cup",
+      "league_country": "Russia",
+      "venue_name": "Stadion imeni Kolosova",
+      "venue_city": "Astrakhan'",
+      "kickoff_local": "2025-09-24 14:00",
+      "selection_label": "Nem szerez mindkét csapat gólt"
+    },
+    "overunder": {
+      "fixture_id": 1457267,
+      "league_id": 121,
+      "league_tier": "OTHER",
+      "market": "O/U 2.5",
+      "selection": "UNDER 2.5",
+      "edge": 0.4683,
+      "odds": 2.7,
+      "model_prob": 0.5438,
+      "kickoff_utc": "2025-09-24T13:00:00+00:00",
+      "rationale": "🎯 TIPP: UNDER 2.5 (Gólok száma (2.5 felett/alatt))\n📊 Elemzés: A modellünk 54.4% valószínűséget ad erre az eredményre, míg a piac 34.8%-ot ár be. \n📈 Értékítélet: Kiváló value bet (46.8% edge), bizalmi szint: Magas\n⚽ Liga státusz: ⚪ Nem TOP liga: DBU Pokalen\n🔢 Gólvárakozás: Hazai 2.00, Vendég 0.50\n💪 Erőviszony: Vendég előny (-2.25)\n🧠 Modell: Ensemble algoritmus\n\n📋 Technikai adatok: Piac=O/U 2.5 | Pick=UNDER 2.5 | Model=0.5438 | Piac=0.3478 | Diff=+0.1960 | Odds=2.70 | Edge=46.8% | RawEdge=+0.4683 | AdjDiff=+0.1960 | Z=+0.41 | λH=2.00 | λA=0.50 | RatingDiff=-2.250 | Ens=Y | Qual=STRICT | DiffTol=0.22 | Notes=Ticket strict",
+      "home_name": "Hillerød",
+      "away_name": "Aarhus",
+      "league_name": "DBU Pokalen",
+      "league_country": "Denmark",
+      "venue_name": "Hillerød Stadion",
+      "venue_city": "Hillerød",
+      "kickoff_local": "2025-09-24 15:00",
+      "selection_label": "Kevesebb mint 2.5 gól"
+    }
+  },
+  "fixtures": [
+    {
+      "fixture_id": 1394438,
+      "analysis": {
+        "fixture_id": 1394438,
+        "kickoff_utc": "2025-09-24T17:00:00+00:00",
+        "league_id": 203,
+        "league_name": "Süper Lig",
+        "league_tier": "TIER1B",
+        "season": 2025,
+        "teams": {
+          "home_id": 1001,
+          "away_id": 549
+        },
+        "model_probs": {
+          "home": 0.3888478669590431,
+          "draw": 0.25,
+          "away": 0.3611521330409569
+        },
+        "odds": {
+          "home": 3.75,
+          "draw": 3.75,
+          "away": 1.95
+        },
+        "fair_odds_model": {
+          "home": 2.5716998470904016,
+          "draw": 4.0,
+          "away": 2.7689162225897577
+        },
+        "edge": {
+          "home": 0.4581795010964116,
+          "draw": -0.0625,
+          "away": -0.295753340570134
+        },
+        "kelly": {
+          "home": 0.1666107276714225,
+          "draw": 0.0,
+          "away": 0.0
+        },
+        "home_rating": {
+          "team_id": 1001,
+          "raw_attack": 0.8,
+          "raw_defense": 0.625,
+          "form_score": 0.26666666666666666,
+          "missing_top_scorers": 0,
+          "adjusted_attack": 0.8,
+          "combined_rating": 0.485
+        },
+        "away_rating": {
+          "team_id": 549,
+          "raw_attack": 1.0,
+          "raw_defense": 0.5555555555555556,
+          "form_score": 0.5,
+          "missing_top_scorers": 0,
+          "adjusted_attack": 1.0,
+          "combined_rating": 0.611111111111111
+        },
+        "lambda_home": 1.3,
+        "lambda_away": 1.3,
+        "market_probs": {
+          "btts_yes": 0.5292099921463087,
+          "btts_no": 0.4707900078536913,
+          "over25": 0.48157042406394956,
+          "under25": 0.5184295759360504
+        },
+        "market_odds": {
+          "btts_yes": 1.53,
+          "btts_no": 2.52,
+          "over25": 1.62,
+          "under25": 2.35
+        },
+        "market_edge": {
+          "btts_yes": -0.19030871201614763,
+          "btts_no": 0.186390819791302,
+          "over25": -0.21985591301640162,
+          "under25": 0.21830950344971867
+        },
+        "injuries_hit_top": [],
+        "market_prob_details": {
+          "one_x_two": {
+            "implied_norm": {
+              "home": 0.2549019607843137,
+              "draw": 0.2549019607843137,
+              "away": 0.4901960784313726
+            },
+            "overround": 1.0461538461538462,
+            "margin": 0.04615384615384621,
+            "selections": {
+              "home": {
+                "model_prob": 0.3888478669590431,
+                "odd": 3.75,
+                "raw_edge": 0.4581795010964116,
+                "margin_adj_diff": 0.1339459061747294,
+                "z_edge": 0.3073520727637755,
+                "rel_value": 0.12218120029237642
+              },
+              "draw": {
+                "model_prob": 0.25,
+                "odd": 3.75,
+                "raw_edge": -0.0625,
+                "margin_adj_diff": -0.004901960784313708,
+                "z_edge": -0.01124803176664615,
+                "rel_value": -0.016666666666666666
+              },
+              "away": {
+                "model_prob": 0.3611521330409569,
+                "odd": 1.95,
+                "raw_edge": -0.295753340570134,
+                "margin_adj_diff": -0.1290439453904157,
+                "z_edge": -0.25813751829610226,
+                "rel_value": -0.1516683797795559
+              }
+            }
+          },
+          "other_markets": {
+            "BTTS": {
+              "overround": 1.050420168067227,
+              "margin": 0.050420168067226934,
+              "selections": {
+                "btts_yes": {
+                  "model_prob": 0.5292099921463087,
+                  "implied_prob": 0.6222222222222222,
+                  "raw_edge": -0.19030871201614763,
+                  "margin_adj_diff": -0.09301223007591353,
+                  "z_edge": -0.19184438591062228,
+                  "rel_value": -0.12438477909552133,
+                  "odd": 1.53
+                },
+                "btts_no": {
+                  "model_prob": 0.4707900078536913,
+                  "implied_prob": 0.37777777777777777,
+                  "raw_edge": 0.186390819791302,
+                  "margin_adj_diff": 0.09301223007591353,
+                  "z_edge": 0.19184438591062228,
+                  "rel_value": 0.07396461102829445,
+                  "odd": 2.52
+                }
+              }
+            },
+            "OU25": {
+              "overround": 1.042815865510901,
+              "margin": 0.042815865510901,
+              "selections": {
+                "over25": {
+                  "model_prob": 0.48157042406394956,
+                  "implied_prob": 0.5919395465994962,
+                  "raw_edge": -0.21985591301640162,
+                  "margin_adj_diff": -0.11036912253554665,
+                  "z_edge": -0.22456737276053856,
+                  "rel_value": -0.13571352655333432,
+                  "odd": 1.62
+                },
+                "under25": {
+                  "model_prob": 0.5184295759360504,
+                  "implied_prob": 0.4080604534005038,
+                  "raw_edge": 0.21830950344971867,
+                  "margin_adj_diff": 0.11036912253554665,
+                  "z_edge": 0.22456737276053856,
+                  "rel_value": 0.09289766104243347,
+                  "odd": 2.35
+                }
+              }
+            }
+          }
+        },
+        "generated_at": "2025-09-24T04:38:15.104149+00:00",
+        "enhanced_model": {
+          "calibration": {
+            "home": {
+              "raw": 0.3888478669590431,
+              "platt": 0.3888478669590431,
+              "iso": 0.3888478669590431,
+              "cal": 0.3888478669590431,
+              "used": "raw"
+            },
+            "draw": {
+              "raw": 0.25,
+              "platt": 0.25,
+              "iso": 0.25,
+              "cal": 0.25,
+              "used": "raw"
+            },
+            "away": {
+              "raw": 0.3611521330409569,
+              "platt": 0.3611521330409569,
+              "iso": 0.3611521330409569,
+              "cal": 0.3611521330409569,
+              "used": "raw"
+            }
+          },
+          "mc_full": {
+            "home": 0.368,
+            "draw": 0.26716666666666666,
+            "away": 0.36483333333333334,
+            "btts_yes": 0.5251666666666667,
+            "btts_no": 0.47483333333333333,
+            "over25": 0.475,
+            "under25": 0.525
+          },
+          "ensemble_probs": {
+            "home": 0.38537322246586925,
+            "draw": 0.2528611111111111,
+            "away": 0.36176566642301966
+          },
+          "weights_used": {
+            "base": 0.55,
+            "cal": 0.2,
+            "bayes": 0.1,
+            "mc": 0.15
+          }
+        },
+        "feature_engineering": {
+          "feature_engineering_available": false
+        }
+      },
+      "primary_fixture": {
+        "fixture": {
+          "id": 1394438,
+          "referee": "Adnan Deniz Kayatepe",
+          "timezone": "UTC",
+          "date": "2025-09-24T17:00:00+00:00",
+          "timestamp": 1758733200,
+          "periods": {
+            "first": null,
+            "second": null
+          },
+          "venue": {
+            "id": 19613,
+            "name": "RHG Enertürk Enerji Stadyumu",
+            "city": "Kayseri"
+          },
+          "status": {
+            "long": "Not Started",
+            "short": "NS",
+            "elapsed": null,
+            "extra": null
+          }
+        },
+        "league": {
+          "id": 203,
+          "name": "Süper Lig",
+          "country": "Turkey",
+          "logo": "https://media.api-sports.io/football/leagues/203.png",
+          "flag": "https://media.api-sports.io/flags/tr.svg",
+          "season": 2025,
+          "round": "Regular Season - 1",
+          "standings": true
+        },
+        "teams": {
+          "home": {
+            "id": 1001,
+            "name": "Kayserispor",
+            "logo": "https://media.api-sports.io/football/teams/1001.png",
+            "winner": null
+          },
+          "away": {
+            "id": 549,
+            "name": "Besiktas",
+            "logo": "https://media.api-sports.io/football/teams/549.png",
+            "winner": null
+          }
+        },
+        "goals": {
+          "home": null,
+          "away": null
+        },
+        "score": {
+          "halftime": {
+            "home": null,
+            "away": null
+          },
+          "fulltime": {
+            "home": null,
+            "away": null
+          },
+          "extratime": {
+            "home": null,
+            "away": null
+          },
+          "penalty": {
+            "home": null,
+            "away": null
+          }
+        }
+      }
+    },
+    {
+      "fixture_id": 1457267,
+      "analysis": {
+        "fixture_id": 1457267,
+        "kickoff_utc": "2025-09-24T13:00:00+00:00",
+        "league_id": 121,
+        "league_name": "DBU Pokalen",
+        "league_tier": "OTHER",
+        "season": 2025,
+        "teams": {
+          "home_id": 6026,
+          "away_id": 406
+        },
+        "model_probs": {
+          "home": 0.08553928595984313,
+          "draw": 0.25,
+          "away": 0.6644607140401568
+        },
+        "odds": {
+          "home": 4.13,
+          "draw": 4.09,
+          "away": 1.71
+        },
+        "fair_odds_model": {
+          "home": 11.690534808409032,
+          "draw": 4.0,
+          "away": 1.5049798714504057
+        },
+        "edge": {
+          "home": -0.6467227489858479,
+          "draw": 0.022499999999999964,
+          "away": 0.13622782100866826
+        },
+        "kelly": {
+          "home": 0.0,
+          "draw": 0.007281553398058241,
+          "away": 0.1918701704347439
+        },
+        "home_rating": {
+          "team_id": 6026,
+          "raw_attack": 4.0,
+          "raw_defense": 1.0,
+          "form_score": 1.0,
+          "missing_top_scorers": 0,
+          "adjusted_attack": 4.0,
+          "combined_rating": 1.9
+        },
+        "away_rating": {
+          "team_id": 406,
+          "raw_attack": 0.0,
+          "raw_defense": 20.0,
+          "form_score": 0.5,
+          "missing_top_scorers": 0,
+          "adjusted_attack": 0.0,
+          "combined_rating": 4.15
+        },
+        "lambda_home": 2.0,
+        "lambda_away": 0.5,
+        "market_probs": {
+          "btts_yes": 0.34021905567465266,
+          "btts_no": 0.6597809443253473,
+          "over25": 0.4561868841166705,
+          "under25": 0.5438131158833295
+        },
+        "market_odds": {
+          "btts_yes": 1.53,
+          "btts_no": 2.38,
+          "over25": 1.44,
+          "under25": 2.7
+        },
+        "market_edge": {
+          "btts_yes": -0.4794648448177814,
+          "btts_no": 0.5702786474943264,
+          "over25": -0.3430908868719945,
+          "under25": 0.46829541288498966
+        },
+        "injuries_hit_top": [],
+        "market_prob_details": {
+          "one_x_two": {
+            "implied_norm": {
+              "home": 0.22598948555475493,
+              "draw": 0.22819965167264983,
+              "away": 0.5458108627725952
+            },
+            "overround": 1.0714248497488663,
+            "margin": 0.07142484974886631,
+            "selections": {
+              "home": {
+                "model_prob": 0.08553928595984313,
+                "odd": 4.13,
+                "raw_edge": -0.6467227489858479,
+                "margin_adj_diff": -0.14045019959491178,
+                "z_edge": -0.3358186518318654,
+                "rel_value": -0.15659146464548376
+              },
+              "draw": {
+                "model_prob": 0.25,
+                "odd": 4.09,
+                "raw_edge": 0.022499999999999964,
+                "margin_adj_diff": 0.021800348327350172,
+                "z_edge": 0.051946161229322683,
+                "rel_value": 0.005501222493887522
+              },
+              "away": {
+                "model_prob": 0.6644607140401568,
+                "odd": 1.71,
+                "raw_edge": 0.13622782100866826,
+                "margin_adj_diff": 0.11864985126756167,
+                "z_edge": 0.23830202851051463,
+                "rel_value": 0.07966539240272998
+              }
+            }
+          },
+          "other_markets": {
+            "BTTS": {
+              "overround": 1.0737628384687208,
+              "margin": 0.07376283846872078,
+              "selections": {
+                "btts_yes": {
+                  "model_prob": 0.34021905567465266,
+                  "implied_prob": 0.6086956521739131,
+                  "raw_edge": -0.4794648448177814,
+                  "margin_adj_diff": -0.2684765964992604,
+                  "z_edge": -0.5501093126369011,
+                  "rel_value": -0.31337571556717736,
+                  "odd": 1.53
+                },
+                "btts_no": {
+                  "model_prob": 0.6597809443253473,
+                  "implied_prob": 0.391304347826087,
+                  "raw_edge": 0.5702786474943264,
+                  "margin_adj_diff": 0.2684765964992603,
+                  "z_edge": 0.5501093126369009,
+                  "rel_value": 0.2396128770984565,
+                  "odd": 2.38
+                }
+              }
+            },
+            "OU25": {
+              "overround": 1.0648148148148149,
+              "margin": 0.06481481481481488,
+              "selections": {
+                "over25": {
+                  "model_prob": 0.4561868841166705,
+                  "implied_prob": 0.6521739130434782,
+                  "raw_edge": -0.3430908868719945,
+                  "margin_adj_diff": -0.19598702892680764,
+                  "z_edge": -0.4114949807662485,
+                  "rel_value": -0.23825756032777398,
+                  "odd": 1.44
+                },
+                "under25": {
+                  "model_prob": 0.5438131158833295,
+                  "implied_prob": 0.3478260869565217,
+                  "raw_edge": 0.46829541288498966,
+                  "margin_adj_diff": 0.1959870289268078,
+                  "z_edge": 0.4114949807662489,
+                  "rel_value": 0.17344274551295913,
+                  "odd": 2.7
+                }
+              }
+            }
+          }
+        },
+        "generated_at": "2025-09-24T04:39:54.307381+00:00",
+        "enhanced_model": {
+          "calibration": {
+            "home": {
+              "raw": 0.08553928595984313,
+              "platt": 0.08553928595984313,
+              "iso": 0.08553928595984313,
+              "cal": 0.08553928595984313,
+              "used": "raw"
+            },
+            "draw": {
+              "raw": 0.25,
+              "platt": 0.25,
+              "iso": 0.25,
+              "cal": 0.25,
+              "used": "raw"
+            },
+            "away": {
+              "raw": 0.6644607140401568,
+              "platt": 0.6644607140401568,
+              "iso": 0.6644607140401568,
+              "cal": 0.6644607140401568,
+              "used": "raw"
+            }
+          },
+          "mc_full": {
+            "home": 0.7260833333333333,
+            "draw": 0.19183333333333333,
+            "away": 0.08208333333333333,
+            "btts_yes": 0.3448333333333333,
+            "btts_no": 0.6551666666666667,
+            "over25": 0.4533333333333333,
+            "under25": 0.5466666666666666
+          },
+          "ensemble_probs": {
+            "home": 0.19229662718875817,
+            "draw": 0.24030555555555558,
+            "away": 0.5673978172556863
+          },
+          "weights_used": {
+            "base": 0.55,
+            "cal": 0.2,
+            "bayes": 0.1,
+            "mc": 0.15
+          }
+        },
+        "feature_engineering": {
+          "feature_engineering_available": false
+        }
+      },
+      "primary_fixture": {
+        "fixture": {
+          "id": 1457267,
+          "referee": null,
+          "timezone": "UTC",
+          "date": "2025-09-24T13:00:00+00:00",
+          "timestamp": 1758718800,
+          "periods": {
+            "first": null,
+            "second": null
+          },
+          "venue": {
+            "id": 4481,
+            "name": "Hillerød Stadion",
+            "city": "Hillerød"
+          },
+          "status": {
+            "long": "Not Started",
+            "short": "NS",
+            "elapsed": null,
+            "extra": null
+          }
+        },
+        "league": {
+          "id": 121,
+          "name": "DBU Pokalen",
+          "country": "Denmark",
+          "logo": "https://media.api-sports.io/football/leagues/121.png",
+          "flag": "https://media.api-sports.io/flags/dk.svg",
+          "season": 2025,
+          "round": "3rd Round",
+          "standings": false
+        },
+        "teams": {
+          "home": {
+            "id": 6026,
+            "name": "Hillerød",
+            "logo": "https://media.api-sports.io/football/teams/6026.png",
+            "winner": null
+          },
+          "away": {
+            "id": 406,
+            "name": "Aarhus",
+            "logo": "https://media.api-sports.io/football/teams/406.png",
+            "winner": null
+          }
+        },
+        "goals": {
+          "home": null,
+          "away": null
+        },
+        "score": {
+          "halftime": {
+            "home": null,
+            "away": null
+          },
+          "fulltime": {
+            "home": null,
+            "away": null
+          },
+          "extratime": {
+            "home": null,
+            "away": null
+          },
+          "penalty": {
+            "home": null,
+            "away": null
+          }
+        }
+      }
+    },
+    {
+      "fixture_id": 1466752,
+      "analysis": {
+        "fixture_id": 1466752,
+        "kickoff_utc": "2025-09-24T12:00:00+00:00",
+        "league_id": 237,
+        "league_name": "Cup",
+        "league_tier": "OTHER",
+        "season": 2025,
+        "teams": {
+          "home_id": 21540,
+          "away_id": 6791
+        },
+        "model_probs": {
+          "home": 0.06237952237044177,
+          "draw": 0.25,
+          "away": 0.6876204776295582
+        },
+        "odds": {
+          "home": 5.82,
+          "draw": 4.22,
+          "away": 1.64
+        },
+        "fair_odds_model": {
+          "home": 16.03090184085547,
+          "draw": 4.0,
+          "away": 1.4542906043858832
+        },
+        "edge": {
+          "home": -0.6369511798040288,
+          "draw": 0.05499999999999994,
+          "away": 0.12769758331247538
+        },
+        "kelly": {
+          "home": 0.0,
+          "draw": 0.01708074534161489,
+          "away": 0.1995274739257429
+        },
+        "home_rating": {
+          "team_id": 21540,
+          "raw_attack": 3.0,
+          "raw_defense": 1.0,
+          "form_score": 1.0,
+          "missing_top_scorers": 0,
+          "adjusted_attack": 3.0,
+          "combined_rating": 1.5499999999999998
+        },
+        "away_rating": {
+          "team_id": 6791,
+          "raw_attack": 0.0,
+          "raw_defense": 20.0,
+          "form_score": 0.5,
+          "missing_top_scorers": 0,
+          "adjusted_attack": 0.0,
+          "combined_rating": 4.15
+        },
+        "lambda_home": 1.5,
+        "lambda_away": 0.5,
+        "market_probs": {
+          "btts_yes": 0.3056744633755495,
+          "btts_no": 0.6943255366244505,
+          "over25": 0.3233235838169365,
+          "under25": 0.6766764161830635
+        },
+        "market_odds": {
+          "btts_yes": 1.84,
+          "btts_no": 1.85,
+          "over25": 1.91,
+          "under25": 2.01
+        },
+        "market_edge": {
+          "btts_yes": -0.4375589873889889,
+          "btts_no": 0.2845022427552335,
+          "over25": -0.38245195490965134,
+          "under25": 0.36011959652795755
+        },
+        "injuries_hit_top": [],
+        "market_prob_details": {
+          "one_x_two": {
+            "implied_norm": {
+              "home": 0.16869302393604058,
+              "draw": 0.23265246429093747,
+              "away": 0.598654511773022
+            },
+            "overround": 1.0185442280474497,
+            "margin": 0.018544228047449707,
+            "selections": {
+              "home": {
+                "model_prob": 0.06237952237044177,
+                "odd": 5.82,
+                "raw_edge": -0.6369511798040288,
+                "margin_adj_diff": -0.10631350156559881,
+                "z_edge": -0.28389591812723564,
+                "rel_value": -0.1094417834714826
+              },
+              "draw": {
+                "model_prob": 0.25,
+                "odd": 4.22,
+                "raw_edge": 0.05499999999999994,
+                "margin_adj_diff": 0.017347535709062528,
+                "z_edge": 0.041057065948732305,
+                "rel_value": 0.013033175355450222
+              },
+              "away": {
+                "model_prob": 0.6876204776295582,
+                "odd": 1.64,
+                "raw_edge": 0.12769758331247538,
+                "margin_adj_diff": 0.08896596585653627,
+                "z_edge": 0.18149997747576174,
+                "rel_value": 0.07786438006858255
+              }
+            }
+          },
+          "other_markets": {
+            "BTTS": {
+              "overround": 1.0840188014101058,
+              "margin": 0.08401880141010576,
+              "selections": {
+                "btts_yes": {
+                  "model_prob": 0.3056744633755495,
+                  "implied_prob": 0.5013550135501355,
+                  "raw_edge": -0.4375589873889889,
+                  "margin_adj_diff": -0.19568055017458597,
+                  "z_edge": -0.39136253748335886,
+                  "rel_value": -0.2378037974940157,
+                  "odd": 1.84
+                },
+                "btts_no": {
+                  "model_prob": 0.6943255366244505,
+                  "implied_prob": 0.49864498644986444,
+                  "raw_edge": 0.2845022427552335,
+                  "margin_adj_diff": 0.19568055017458608,
+                  "z_edge": 0.3913625374833591,
+                  "rel_value": 0.15378499608391,
+                  "odd": 1.85
+                }
+              }
+            },
+            "OU25": {
+              "overround": 1.021072647235029,
+              "margin": 0.021072647235029107,
+              "selections": {
+                "over25": {
+                  "model_prob": 0.3233235838169365,
+                  "implied_prob": 0.5127551020408163,
+                  "raw_edge": -0.38245195490965134,
+                  "margin_adj_diff": -0.18943151822387982,
+                  "z_edge": -0.37898637309507294,
+                  "rel_value": -0.2002366256071473,
+                  "odd": 1.91
+                },
+                "under25": {
+                  "model_prob": 0.6766764161830635,
+                  "implied_prob": 0.4872448979591837,
+                  "raw_edge": 0.36011959652795755,
+                  "margin_adj_diff": 0.18943151822387982,
+                  "z_edge": 0.37898637309507294,
+                  "rel_value": 0.1791639783721182,
+                  "odd": 2.01
+                }
+              }
+            }
+          }
+        },
+        "generated_at": "2025-09-24T04:40:10.945901+00:00",
+        "enhanced_model": {
+          "calibration": {
+            "home": {
+              "raw": 0.06237952237044177,
+              "platt": 0.06237952237044177,
+              "iso": 0.06237952237044177,
+              "cal": 0.06237952237044177,
+              "used": "raw"
+            },
+            "draw": {
+              "raw": 0.25,
+              "platt": 0.25,
+              "iso": 0.25,
+              "cal": 0.25,
+              "used": "raw"
+            },
+            "away": {
+              "raw": 0.6876204776295582,
+              "platt": 0.6876204776295582,
+              "iso": 0.6876204776295582,
+              "cal": 0.6876204776295582,
+              "used": "raw"
+            }
+          },
+          "mc_full": {
+            "home": 0.6204166666666666,
+            "draw": 0.25858333333333333,
+            "away": 0.121,
+            "btts_yes": 0.30275,
+            "btts_no": 0.6972499999999999,
+            "over25": 0.3179166666666667,
+            "under25": 0.6820833333333334
+          },
+          "ensemble_probs": {
+            "home": 0.15538571308647922,
+            "draw": 0.25143055555555555,
+            "away": 0.5931837313579652
+          },
+          "weights_used": {
+            "base": 0.55,
+            "cal": 0.2,
+            "bayes": 0.1,
+            "mc": 0.15
+          }
+        },
+        "feature_engineering": {
+          "feature_engineering_available": false
+        }
+      },
+      "primary_fixture": {
+        "fixture": {
+          "id": 1466752,
+          "referee": null,
+          "timezone": "UTC",
+          "date": "2025-09-24T12:00:00+00:00",
+          "timestamp": 1758715200,
+          "periods": {
+            "first": null,
+            "second": null
+          },
+          "venue": {
+            "id": 19913,
+            "name": "Stadion imeni Kolosova",
+            "city": "Astrakhan'"
+          },
+          "status": {
+            "long": "Not Started",
+            "short": "NS",
+            "elapsed": null,
+            "extra": null
+          }
+        },
+        "league": {
+          "id": 237,
+          "name": "Cup",
+          "country": "Russia",
+          "logo": "https://media.api-sports.io/football/leagues/237.png",
+          "flag": "https://media.api-sports.io/flags/ru.svg",
+          "season": 2025,
+          "round": "Regions Path - 4th Round",
+          "standings": false
+        },
+        "teams": {
+          "home": {
+            "id": 21540,
+            "name": "Astrakhan",
+            "logo": "https://media.api-sports.io/football/teams/21540.png",
+            "winner": null
+          },
+          "away": {
+            "id": 6791,
+            "name": "Chernomorets",
+            "logo": "https://media.api-sports.io/football/teams/6791.png",
+            "winner": null
+          }
+        },
+        "goals": {
+          "home": null,
+          "away": null
+        },
+        "score": {
+          "halftime": {
+            "home": null,
+            "away": null
+          },
+          "fulltime": {
+            "home": null,
+            "away": null
+          },
+          "extratime": {
+            "home": null,
+            "away": null
+          },
+          "penalty": {
+            "home": null,
+            "away": null
+          }
+        }
+      }
+    }
+  ]
+}

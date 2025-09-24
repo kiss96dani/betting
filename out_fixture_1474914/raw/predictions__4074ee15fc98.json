@@ -1,0 +1,819 @@
+{
+  "get": "predictions",
+  "parameters": {
+    "fixture": "1474914"
+  },
+  "errors": [],
+  "results": 1,
+  "paging": {
+    "current": 1,
+    "total": 1
+  },
+  "response": [
+    {
+      "predictions": {
+        "winner": {
+          "id": 2348,
+          "name": "Penarol",
+          "comment": null
+        },
+        "win_or_draw": false,
+        "under_over": null,
+        "goals": {
+          "home": "-1.5",
+          "away": "-3.5"
+        },
+        "advice": "Winner : Penarol",
+        "percent": {
+          "home": "10%",
+          "draw": "45%",
+          "away": "45%"
+        }
+      },
+      "league": {
+        "id": 930,
+        "name": "Copa Uruguay",
+        "country": "Uruguay",
+        "logo": "https://media.api-sports.io/football/leagues/930.png",
+        "flag": "https://media.api-sports.io/flags/uy.svg",
+        "season": 2025
+      },
+      "teams": {
+        "home": {
+          "id": 2374,
+          "name": "Tacuarembo",
+          "logo": "https://media.api-sports.io/football/teams/2374.png",
+          "last_5": {
+            "played": 2,
+            "form": "67%",
+            "att": "11%",
+            "def": "94%",
+            "goals": {
+              "for": {
+                "total": 2,
+                "average": "1.0"
+              },
+              "against": {
+                "total": 1,
+                "average": "0.5"
+              }
+            }
+          },
+          "league": {
+            "form": "DW",
+            "fixtures": {
+              "played": {
+                "home": 0,
+                "away": 2,
+                "total": 2
+              },
+              "wins": {
+                "home": 0,
+                "away": 1,
+                "total": 1
+              },
+              "draws": {
+                "home": 0,
+                "away": 1,
+                "total": 1
+              },
+              "loses": {
+                "home": 0,
+                "away": 0,
+                "total": 0
+              }
+            },
+            "goals": {
+              "for": {
+                "total": {
+                  "home": 0,
+                  "away": 2,
+                  "total": 2
+                },
+                "average": {
+                  "home": "0.0",
+                  "away": "1.0",
+                  "total": "1.0"
+                },
+                "minute": {
+                  "0-15": {
+                    "total": null,
+                    "percentage": null
+                  },
+                  "16-30": {
+                    "total": 1,
+                    "percentage": "16.67%"
+                  },
+                  "31-45": {
+                    "total": null,
+                    "percentage": null
+                  },
+                  "46-60": {
+                    "total": null,
+                    "percentage": null
+                  },
+                  "61-75": {
+                    "total": 1,
+                    "percentage": "16.67%"
+                  },
+                  "76-90": {
+                    "total": null,
+                    "percentage": null
+                  },
+                  "91-105": {
+                    "total": null,
+                    "percentage": null
+                  },
+                  "106-120": {
+                    "total": 4,
+                    "percentage": "66.67%"
+                  }
+                },
+                "under_over": {
+                  "0.5": {
+                    "over": 2,
+                    "under": 0
+                  },
+                  "1.5": {
+                    "over": 0,
+                    "under": 2
+                  },
+                  "2.5": {
+                    "over": 0,
+                    "under": 2
+                  },
+                  "3.5": {
+                    "over": 0,
+                    "under": 2
+                  },
+                  "4.5": {
+                    "over": 0,
+                    "under": 2
+                  }
+                }
+              },
+              "against": {
+                "total": {
+                  "home": 0,
+                  "away": 1,
+                  "total": 1
+                },
+                "average": {
+                  "home": "0.0",
+                  "away": "0.5",
+                  "total": "0.5"
+                },
+                "minute": {
+                  "0-15": {
+                    "total": null,
+                    "percentage": null
+                  },
+                  "16-30": {
+                    "total": 1,
+                    "percentage": "25.00%"
+                  },
+                  "31-45": {
+                    "total": null,
+                    "percentage": null
+                  },
+                  "46-60": {
+                    "total": null,
+                    "percentage": null
+                  },
+                  "61-75": {
+                    "total": null,
+                    "percentage": null
+                  },
+                  "76-90": {
+                    "total": null,
+                    "percentage": null
+                  },
+                  "91-105": {
+                    "total": null,
+                    "percentage": null
+                  },
+                  "106-120": {
+                    "total": 3,
+                    "percentage": "75.00%"
+                  }
+                },
+                "under_over": {
+                  "0.5": {
+                    "over": 1,
+                    "under": 1
+                  },
+                  "1.5": {
+                    "over": 0,
+                    "under": 2
+                  },
+                  "2.5": {
+                    "over": 0,
+                    "under": 2
+                  },
+                  "3.5": {
+                    "over": 0,
+                    "under": 2
+                  },
+                  "4.5": {
+                    "over": 0,
+                    "under": 2
+                  }
+                }
+              }
+            },
+            "biggest": {
+              "streak": {
+                "wins": 0,
+                "draws": 1,
+                "loses": 0
+              },
+              "wins": {
+                "home": null,
+                "away": "0-1"
+              },
+              "loses": {
+                "home": null,
+                "away": null
+              },
+              "goals": {
+                "for": {
+                  "home": 0,
+                  "away": 1
+                },
+                "against": {
+                  "home": 0,
+                  "away": 1
+                }
+              }
+            },
+            "clean_sheet": {
+              "home": 0,
+              "away": 1,
+              "total": 1
+            },
+            "failed_to_score": {
+              "home": 0,
+              "away": 0,
+              "total": 0
+            },
+            "penalty": {
+              "scored": {
+                "total": 4,
+                "percentage": "80.00%"
+              },
+              "missed": {
+                "total": 1,
+                "percentage": "20.00%"
+              },
+              "total": 5
+            },
+            "lineups": [],
+            "cards": {
+              "yellow": {
+                "0-15": {
+                  "total": null,
+                  "percentage": null
+                },
+                "16-30": {
+                  "total": null,
+                  "percentage": null
+                },
+                "31-45": {
+                  "total": null,
+                  "percentage": null
+                },
+                "46-60": {
+                  "total": null,
+                  "percentage": null
+                },
+                "61-75": {
+                  "total": null,
+                  "percentage": null
+                },
+                "76-90": {
+                  "total": null,
+                  "percentage": null
+                },
+                "91-105": {
+                  "total": null,
+                  "percentage": null
+                },
+                "106-120": {
+                  "total": null,
+                  "percentage": null
+                }
+              },
+              "red": {
+                "0-15": {
+                  "total": null,
+                  "percentage": null
+                },
+                "16-30": {
+                  "total": null,
+                  "percentage": null
+                },
+                "31-45": {
+                  "total": null,
+                  "percentage": null
+                },
+                "46-60": {
+                  "total": null,
+                  "percentage": null
+                },
+                "61-75": {
+                  "total": null,
+                  "percentage": null
+                },
+                "76-90": {
+                  "total": null,
+                  "percentage": null
+                },
+                "91-105": {
+                  "total": null,
+                  "percentage": null
+                },
+                "106-120": {
+                  "total": null,
+                  "percentage": null
+                }
+              }
+            }
+          }
+        },
+        "away": {
+          "id": 2348,
+          "name": "Penarol",
+          "logo": "https://media.api-sports.io/football/teams/2348.png",
+          "last_5": {
+            "played": 2,
+            "form": "100%",
+            "att": "28%",
+            "def": "94%",
+            "goals": {
+              "for": {
+                "total": 5,
+                "average": "2.5"
+              },
+              "against": {
+                "total": 1,
+                "average": "0.5"
+              }
+            }
+          },
+          "league": {
+            "form": "WW",
+            "fixtures": {
+              "played": {
+                "home": 1,
+                "away": 1,
+                "total": 2
+              },
+              "wins": {
+                "home": 1,
+                "away": 1,
+                "total": 2
+              },
+              "draws": {
+                "home": 0,
+                "away": 0,
+                "total": 0
+              },
+              "loses": {
+                "home": 0,
+                "away": 0,
+                "total": 0
+              }
+            },
+            "goals": {
+              "for": {
+                "total": {
+                  "home": 2,
+                  "away": 3,
+                  "total": 5
+                },
+                "average": {
+                  "home": "2.0",
+                  "away": "3.0",
+                  "total": "2.5"
+                },
+                "minute": {
+                  "0-15": {
+                    "total": 1,
+                    "percentage": "20.00%"
+                  },
+                  "16-30": {
+                    "total": 1,
+                    "percentage": "20.00%"
+                  },
+                  "31-45": {
+                    "total": null,
+                    "percentage": null
+                  },
+                  "46-60": {
+                    "total": 1,
+                    "percentage": "20.00%"
+                  },
+                  "61-75": {
+                    "total": null,
+                    "percentage": null
+                  },
+                  "76-90": {
+                    "total": 1,
+                    "percentage": "20.00%"
+                  },
+                  "91-105": {
+                    "total": 1,
+                    "percentage": "20.00%"
+                  },
+                  "106-120": {
+                    "total": null,
+                    "percentage": null
+                  }
+                },
+                "under_over": {
+                  "0.5": {
+                    "over": 2,
+                    "under": 0
+                  },
+                  "1.5": {
+                    "over": 2,
+                    "under": 0
+                  },
+                  "2.5": {
+                    "over": 1,
+                    "under": 1
+                  },
+                  "3.5": {
+                    "over": 0,
+                    "under": 2
+                  },
+                  "4.5": {
+                    "over": 0,
+                    "under": 2
+                  }
+                }
+              },
+              "against": {
+                "total": {
+                  "home": 1,
+                  "away": 0,
+                  "total": 1
+                },
+                "average": {
+                  "home": "1.0",
+                  "away": "0.0",
+                  "total": "0.5"
+                },
+                "minute": {
+                  "0-15": {
+                    "total": null,
+                    "percentage": null
+                  },
+                  "16-30": {
+                    "total": null,
+                    "percentage": null
+                  },
+                  "31-45": {
+                    "total": 1,
+                    "percentage": "100.00%"
+                  },
+                  "46-60": {
+                    "total": null,
+                    "percentage": null
+                  },
+                  "61-75": {
+                    "total": null,
+                    "percentage": null
+                  },
+                  "76-90": {
+                    "total": null,
+                    "percentage": null
+                  },
+                  "91-105": {
+                    "total": null,
+                    "percentage": null
+                  },
+                  "106-120": {
+                    "total": null,
+                    "percentage": null
+                  }
+                },
+                "under_over": {
+                  "0.5": {
+                    "over": 1,
+                    "under": 1
+                  },
+                  "1.5": {
+                    "over": 0,
+                    "under": 2
+                  },
+                  "2.5": {
+                    "over": 0,
+                    "under": 2
+                  },
+                  "3.5": {
+                    "over": 0,
+                    "under": 2
+                  },
+                  "4.5": {
+                    "over": 0,
+                    "under": 2
+                  }
+                }
+              }
+            },
+            "biggest": {
+              "streak": {
+                "wins": 2,
+                "draws": 0,
+                "loses": 0
+              },
+              "wins": {
+                "home": "2-1",
+                "away": "0-3"
+              },
+              "loses": {
+                "home": null,
+                "away": null
+              },
+              "goals": {
+                "for": {
+                  "home": 2,
+                  "away": 3
+                },
+                "against": {
+                  "home": 1,
+                  "away": 0
+                }
+              }
+            },
+            "clean_sheet": {
+              "home": 0,
+              "away": 1,
+              "total": 1
+            },
+            "failed_to_score": {
+              "home": 0,
+              "away": 0,
+              "total": 0
+            },
+            "penalty": {
+              "scored": {
+                "total": 0,
+                "percentage": "0%"
+              },
+              "missed": {
+                "total": 0,
+                "percentage": "0%"
+              },
+              "total": 0
+            },
+            "lineups": [],
+            "cards": {
+              "yellow": {
+                "0-15": {
+                  "total": null,
+                  "percentage": null
+                },
+                "16-30": {
+                  "total": null,
+                  "percentage": null
+                },
+                "31-45": {
+                  "total": null,
+                  "percentage": null
+                },
+                "46-60": {
+                  "total": null,
+                  "percentage": null
+                },
+                "61-75": {
+                  "total": null,
+                  "percentage": null
+                },
+                "76-90": {
+                  "total": null,
+                  "percentage": null
+                },
+                "91-105": {
+                  "total": null,
+                  "percentage": null
+                },
+                "106-120": {
+                  "total": null,
+                  "percentage": null
+                }
+              },
+              "red": {
+                "0-15": {
+                  "total": null,
+                  "percentage": null
+                },
+                "16-30": {
+                  "total": null,
+                  "percentage": null
+                },
+                "31-45": {
+                  "total": null,
+                  "percentage": null
+                },
+                "46-60": {
+                  "total": null,
+                  "percentage": null
+                },
+                "61-75": {
+                  "total": null,
+                  "percentage": null
+                },
+                "76-90": {
+                  "total": null,
+                  "percentage": null
+                },
+                "91-105": {
+                  "total": null,
+                  "percentage": null
+                },
+                "106-120": {
+                  "total": null,
+                  "percentage": null
+                }
+              }
+            }
+          }
+        }
+      },
+      "comparison": {
+        "form": {
+          "home": "40%",
+          "away": "60%"
+        },
+        "att": {
+          "home": "29%",
+          "away": "71%"
+        },
+        "def": {
+          "home": "50%",
+          "away": "50%"
+        },
+        "poisson_distribution": {
+          "home": "0%",
+          "away": "0%"
+        },
+        "h2h": {
+          "home": "20%",
+          "away": "80%"
+        },
+        "goals": {
+          "home": "25%",
+          "away": "75%"
+        },
+        "total": {
+          "home": "32.8%",
+          "away": "67.2%"
+        }
+      },
+      "h2h": [
+        {
+          "fixture": {
+            "id": 500716,
+            "referee": null,
+            "timezone": "UTC",
+            "date": "2015-03-08T00:00:00+00:00",
+            "timestamp": 1425772800,
+            "periods": {
+              "first": 1425772800,
+              "second": 1425776400
+            },
+            "venue": {
+              "id": null,
+              "name": "Estadio Atilio Paiva Olivera",
+              "city": "Rivera"
+            },
+            "status": {
+              "long": "Match Finished",
+              "short": "FT",
+              "elapsed": 90,
+              "extra": null
+            }
+          },
+          "league": {
+            "id": 270,
+            "name": "Primera División - Clausura",
+            "country": "Uruguay",
+            "logo": "https://media.api-sports.io/football/leagues/270.png",
+            "flag": "https://media.api-sports.io/flags/uy.svg",
+            "season": 2015,
+            "round": "Regular Season - 3",
+            "standings": true
+          },
+          "teams": {
+            "home": {
+              "id": 2374,
+              "name": "Tacuarembo",
+              "logo": "https://media.api-sports.io/football/teams/2374.png",
+              "winner": null
+            },
+            "away": {
+              "id": 2348,
+              "name": "Penarol",
+              "logo": "https://media.api-sports.io/football/teams/2348.png",
+              "winner": null
+            }
+          },
+          "goals": {
+            "home": 1,
+            "away": 1
+          },
+          "score": {
+            "halftime": {
+              "home": 1,
+              "away": 1
+            },
+            "fulltime": {
+              "home": 1,
+              "away": 1
+            },
+            "extratime": {
+              "home": null,
+              "away": null
+            },
+            "penalty": {
+              "home": null,
+              "away": null
+            }
+          }
+        },
+        {
+          "fixture": {
+            "id": 500240,
+            "referee": null,
+            "timezone": "UTC",
+            "date": "2014-08-31T21:00:00+00:00",
+            "timestamp": 1409518800,
+            "periods": {
+              "first": 1409518800,
+              "second": 1409522400
+            },
+            "venue": {
+              "id": 1624,
+              "name": "Estadio Centenario",
+              "city": "Montevideo"
+            },
+            "status": {
+              "long": "Match Finished",
+              "short": "FT",
+              "elapsed": 90,
+              "extra": null
+            }
+          },
+          "league": {
+            "id": 268,
+            "name": "Primera División - Apertura",
+            "country": "Uruguay",
+            "logo": "https://media.api-sports.io/football/leagues/268.png",
+            "flag": "https://media.api-sports.io/flags/uy.svg",
+            "season": 2014,
+            "round": "Regular Season - 3",
+            "standings": true
+          },
+          "teams": {
+            "home": {
+              "id": 2348,
+              "name": "Penarol",
+              "logo": "https://media.api-sports.io/football/teams/2348.png",
+              "winner": true
+            },
+            "away": {
+              "id": 2374,
+              "name": "Tacuarembo",
+              "logo": "https://media.api-sports.io/football/teams/2374.png",
+              "winner": false
+            }
+          },
+          "goals": {
+            "home": 2,
+            "away": 0
+          },
+          "score": {
+            "halftime": {
+              "home": 1,
+              "away": 0
+            },
+            "fulltime": {
+              "home": 2,
+              "away": 0
+            },
+            "extratime": {
+              "home": null,
+              "away": null
+            },
+            "penalty": {
+              "home": null,
+              "away": null
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

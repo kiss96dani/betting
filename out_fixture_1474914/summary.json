@@ -1,0 +1,391 @@
+{
+  "fixture_id": 1474914,
+  "generated_at": "2025-09-24T03:52:36.550058+00:00",
+  "endpoints": [
+    {
+      "tag": "team_home_venues",
+      "endpoint": "/venues",
+      "params": {
+        "id": "<HOME_VENUE_ID>"
+      },
+      "results": null,
+      "errors": [
+        "skipped_by_config"
+      ]
+    },
+    {
+      "tag": "coach_home",
+      "endpoint": "/coachs",
+      "params": {
+        "team": "<HOME_ID>"
+      },
+      "results": null,
+      "errors": [
+        "skipped_by_config"
+      ]
+    },
+    {
+      "tag": "coach_away",
+      "endpoint": "/coachs",
+      "params": {
+        "team": "<AWAY_ID>"
+      },
+      "results": null,
+      "errors": [
+        "skipped_by_config"
+      ]
+    },
+    {
+      "tag": "team_home_transfers",
+      "endpoint": "/transfers",
+      "params": {
+        "team": "<HOME_ID>"
+      },
+      "results": null,
+      "errors": [
+        "skipped_by_config"
+      ]
+    },
+    {
+      "tag": "team_away_transfers",
+      "endpoint": "/transfers",
+      "params": {
+        "team": "<AWAY_ID>"
+      },
+      "results": null,
+      "errors": [
+        "skipped_by_config"
+      ]
+    },
+    {
+      "tag": "team_home_countries",
+      "endpoint": "/teams/countries",
+      "params": {},
+      "results": null,
+      "errors": [
+        "skipped_by_config"
+      ]
+    },
+    {
+      "tag": "timezone_info",
+      "endpoint": "/timezone",
+      "params": {},
+      "results": null,
+      "errors": [
+        "skipped_by_config"
+      ]
+    },
+    {
+      "tag": "fixture",
+      "endpoint": "/fixtures",
+      "params": {
+        "id": "1474914"
+      },
+      "results": 1,
+      "errors": [],
+      "cached": true
+    },
+    {
+      "tag": "predictions",
+      "endpoint": "/predictions",
+      "params": {
+        "fixture": "1474914"
+      },
+      "results": 1,
+      "errors": [],
+      "cached": true
+    },
+    {
+      "tag": "h2h",
+      "endpoint": "/fixtures/headtohead",
+      "params": {
+        "h2h": "2374-2348",
+        "last": "10"
+      },
+      "results": 2,
+      "errors": [],
+      "cached": true
+    },
+    {
+      "tag": "h2h_extended",
+      "endpoint": "/fixtures/headtohead",
+      "params": {
+        "h2h": "2374-2348",
+        "last": "20"
+      },
+      "results": 2,
+      "errors": [],
+      "cached": true
+    },
+    {
+      "tag": "form_home_last",
+      "endpoint": "/fixtures",
+      "params": {
+        "team": "2374",
+        "last": 10
+      },
+      "results": 10,
+      "errors": [],
+      "cached": true
+    },
+    {
+      "tag": "form_away_last",
+      "endpoint": "/fixtures",
+      "params": {
+        "team": "2348",
+        "last": 10
+      },
+      "results": 10,
+      "errors": [],
+      "cached": true
+    },
+    {
+      "tag": "form_home_extended",
+      "endpoint": "/fixtures",
+      "params": {
+        "team": "2374",
+        "last": 20
+      },
+      "results": 20,
+      "errors": [],
+      "cached": true
+    },
+    {
+      "tag": "form_away_extended",
+      "endpoint": "/fixtures",
+      "params": {
+        "team": "2348",
+        "last": 20
+      },
+      "results": 20,
+      "errors": [],
+      "cached": true
+    },
+    {
+      "tag": "squad_home",
+      "endpoint": "/players/squads",
+      "params": {
+        "team": "2374"
+      },
+      "results": 1,
+      "errors": [],
+      "cached": true
+    },
+    {
+      "tag": "squad_away",
+      "endpoint": "/players/squads",
+      "params": {
+        "team": "2348"
+      },
+      "results": 1,
+      "errors": [],
+      "cached": true
+    },
+    {
+      "tag": "team_home_info",
+      "endpoint": "/teams",
+      "params": {
+        "id": "2374"
+      },
+      "results": 1,
+      "errors": [],
+      "cached": true
+    },
+    {
+      "tag": "team_away_info",
+      "endpoint": "/teams",
+      "params": {
+        "id": "2348"
+      },
+      "results": 1,
+      "errors": [],
+      "cached": true
+    },
+    {
+      "tag": "team_stats_home",
+      "endpoint": "/teams/statistics",
+      "params": {
+        "league": "930",
+        "season": "2025",
+        "team": "2374"
+      },
+      "results": 11,
+      "errors": [],
+      "cached": true
+    },
+    {
+      "tag": "team_stats_away",
+      "endpoint": "/teams/statistics",
+      "params": {
+        "league": "930",
+        "season": "2025",
+        "team": "2348"
+      },
+      "results": 11,
+      "errors": [],
+      "cached": true
+    },
+    {
+      "tag": "team_home_seasons",
+      "endpoint": "/teams/seasons",
+      "params": {
+        "team": "2374"
+      },
+      "results": 14,
+      "errors": [],
+      "cached": true
+    },
+    {
+      "tag": "team_away_seasons",
+      "endpoint": "/teams/seasons",
+      "params": {
+        "team": "2348"
+      },
+      "results": 14,
+      "errors": [],
+      "cached": true
+    },
+    {
+      "tag": "league_info",
+      "endpoint": "/leagues",
+      "params": {
+        "id": "930"
+      },
+      "results": 1,
+      "errors": [],
+      "cached": true
+    },
+    {
+      "tag": "odds",
+      "endpoint": "/odds",
+      "params": {
+        "fixture": "1474914"
+      },
+      "results": 0,
+      "errors": [],
+      "cached": false
+    },
+    {
+      "tag": "topscorers_primary",
+      "endpoint": "/players/topscorers",
+      "params": {
+        "league": "930",
+        "season": "2025"
+      },
+      "results": 0,
+      "errors": [],
+      "cached": false
+    },
+    {
+      "tag": "standings_primary",
+      "endpoint": "/standings",
+      "params": {
+        "league": "930",
+        "season": "2025"
+      },
+      "results": 0,
+      "errors": [],
+      "cached": false
+    },
+    {
+      "tag": "injuries_league",
+      "endpoint": "/injuries",
+      "params": {
+        "league": "930",
+        "season": "2025"
+      },
+      "results": 0,
+      "errors": [],
+      "cached": false
+    },
+    {
+      "tag": "injuries_home",
+      "endpoint": "/injuries",
+      "params": {
+        "team": "2374"
+      },
+      "results": 0,
+      "errors": {
+        "season": "The Season field is required."
+      },
+      "cached": false
+    },
+    {
+      "tag": "injuries_away",
+      "endpoint": "/injuries",
+      "params": {
+        "team": "2348"
+      },
+      "results": 0,
+      "errors": {
+        "season": "The Season field is required."
+      },
+      "cached": false
+    },
+    {
+      "tag": "fixture_events",
+      "endpoint": "/fixtures/events",
+      "params": {
+        "fixture": "1474914"
+      },
+      "results": 0,
+      "errors": [],
+      "cached": false
+    },
+    {
+      "tag": "fixture_lineups",
+      "endpoint": "/fixtures/lineups",
+      "params": {
+        "fixture": "1474914"
+      },
+      "results": 0,
+      "errors": [],
+      "cached": false
+    },
+    {
+      "tag": "fixture_statistics",
+      "endpoint": "/fixtures/statistics",
+      "params": {
+        "fixture": "1474914"
+      },
+      "results": 0,
+      "errors": [],
+      "cached": false
+    },
+    {
+      "tag": "fixture_players_stats",
+      "endpoint": "/fixtures/players",
+      "params": {
+        "fixture": "1474914"
+      },
+      "results": 0,
+      "errors": [],
+      "cached": false
+    },
+    {
+      "tag": "sidelined_home",
+      "endpoint": "/sidelined",
+      "params": {
+        "team": "2374"
+      },
+      "results": 0,
+      "errors": {
+        "team": "The Team field do not exist."
+      },
+      "cached": false
+    },
+    {
+      "tag": "sidelined_away",
+      "endpoint": "/sidelined",
+      "params": {
+        "team": "2348"
+      },
+      "results": 0,
+      "errors": {
+        "team": "The Team field do not exist."
+      },
+      "cached": false
+    }
+  ],
+  "league_tier": "OTHER"
+}

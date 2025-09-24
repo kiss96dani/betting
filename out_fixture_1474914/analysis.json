@@ -1,0 +1,115 @@
+{
+  "fixture_id": 1474914,
+  "kickoff_utc": "2025-09-24T23:30:00+00:00",
+  "league_id": 930,
+  "league_name": "Copa Uruguay",
+  "league_tier": "OTHER",
+  "season": 2025,
+  "teams": {
+    "home_id": 2374,
+    "away_id": 2348
+  },
+  "model_probs": {
+    "home": 0.296490686464493,
+    "draw": 0.25,
+    "away": 0.453509313535507
+  },
+  "odds": null,
+  "fair_odds_model": {
+    "home": 3.372787226217838,
+    "draw": 4.0,
+    "away": 2.20502638017313
+  },
+  "edge": {
+    "home": 0.0,
+    "draw": 0.0,
+    "away": 0.0
+  },
+  "kelly": {
+    "home": 0.0,
+    "draw": 0.0,
+    "away": 0.0
+  },
+  "home_rating": {
+    "team_id": 2374,
+    "raw_attack": 1.0,
+    "raw_defense": 2.0,
+    "form_score": 0.6666666666666666,
+    "missing_top_scorers": 0,
+    "adjusted_attack": 1.0,
+    "combined_rating": 0.95
+  },
+  "away_rating": {
+    "team_id": 2348,
+    "raw_attack": 2.5,
+    "raw_defense": 2.0,
+    "form_score": 1.0,
+    "missing_top_scorers": 0,
+    "adjusted_attack": 2.5,
+    "combined_rating": 1.575
+  },
+  "lambda_home": 0.75,
+  "lambda_away": 1.5,
+  "market_probs": {
+    "btts_yes": 0.40990251167241987,
+    "btts_no": 0.5900974883275801,
+    "over25": 0.39066073300172177,
+    "under25": 0.6093392669982782
+  },
+  "market_odds": {},
+  "market_edge": {},
+  "injuries_hit_top": [],
+  "market_prob_details": {
+    "one_x_two": {},
+    "other_markets": {}
+  },
+  "generated_at": "2025-09-24T04:40:40.520554+00:00",
+  "enhanced_model": {
+    "calibration": {
+      "home": {
+        "raw": 0.296490686464493,
+        "platt": 0.296490686464493,
+        "iso": 0.296490686464493,
+        "cal": 0.296490686464493,
+        "used": "raw"
+      },
+      "draw": {
+        "raw": 0.25,
+        "platt": 0.25,
+        "iso": 0.25,
+        "cal": 0.25,
+        "used": "raw"
+      },
+      "away": {
+        "raw": 0.453509313535507,
+        "platt": 0.453509313535507,
+        "iso": 0.453509313535507,
+        "cal": 0.453509313535507,
+        "used": "raw"
+      }
+    },
+    "mc_full": {
+      "home": 0.18666666666666668,
+      "draw": 0.26108333333333333,
+      "away": 0.55225,
+      "btts_yes": 0.4058333333333333,
+      "btts_no": 0.5941666666666667,
+      "over25": 0.3868333333333333,
+      "under25": 0.6131666666666666
+    },
+    "ensemble_probs": {
+      "home": 0.27818668316485534,
+      "draw": 0.2518472222222222,
+      "away": 0.4699660946129225
+    },
+    "weights_used": {
+      "base": 0.55,
+      "cal": 0.2,
+      "bayes": 0.1,
+      "mc": 0.15
+    }
+  },
+  "feature_engineering": {
+    "feature_engineering_available": false
+  }
+}

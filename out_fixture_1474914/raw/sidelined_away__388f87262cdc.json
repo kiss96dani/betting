@@ -1,0 +1,15 @@
+{
+  "get": "sidelined",
+  "parameters": {
+    "team": "2348"
+  },
+  "errors": {
+    "team": "The Team field do not exist."
+  },
+  "results": 0,
+  "paging": {
+    "current": 1,
+    "total": 1
+  },
+  "response": []
+}

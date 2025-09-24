@@ -1,0 +1,34 @@
+{
+  "get": "teams",
+  "parameters": {
+    "id": "2374"
+  },
+  "errors": [],
+  "results": 1,
+  "paging": {
+    "current": 1,
+    "total": 1
+  },
+  "response": [
+    {
+      "team": {
+        "id": 2374,
+        "name": "Tacuarembo",
+        "code": null,
+        "country": "Uruguay",
+        "founded": 1999,
+        "national": false,
+        "logo": "https://media.api-sports.io/football/teams/2374.png"
+      },
+      "venue": {
+        "id": 1646,
+        "name": "Estadio Raúl Saturnino Goyenola",
+        "address": "Avenida General Antigas 206",
+        "city": "Tacuarembó",
+        "capacity": 8600,
+        "surface": "grass",
+        "image": "https://media.api-sports.io/football/venues/1646.png"
+      }
+    }
+  ]
+}

@@ -1,0 +1,70 @@
+{
+  "fixture": {
+    "id": 1474914,
+    "referee": null,
+    "timezone": "UTC",
+    "date": "2025-09-24T23:30:00+00:00",
+    "timestamp": 1758756600,
+    "periods": {
+      "first": null,
+      "second": null
+    },
+    "venue": {
+      "id": 0,
+      "name": null,
+      "city": null
+    },
+    "status": {
+      "long": "Not Started",
+      "short": "NS",
+      "elapsed": null,
+      "extra": null
+    }
+  },
+  "league": {
+    "id": 930,
+    "name": "Copa Uruguay",
+    "country": "Uruguay",
+    "logo": "https://media.api-sports.io/football/leagues/930.png",
+    "flag": "https://media.api-sports.io/flags/uy.svg",
+    "season": 2025,
+    "round": "Quarter-finals",
+    "standings": false
+  },
+  "teams": {
+    "home": {
+      "id": 2374,
+      "name": "Tacuarembo",
+      "logo": "https://media.api-sports.io/football/teams/2374.png",
+      "winner": null
+    },
+    "away": {
+      "id": 2348,
+      "name": "Penarol",
+      "logo": "https://media.api-sports.io/football/teams/2348.png",
+      "winner": null
+    }
+  },
+  "goals": {
+    "home": null,
+    "away": null
+  },
+  "score": {
+    "halftime": {
+      "home": null,
+      "away": null
+    },
+    "fulltime": {
+      "home": null,
+      "away": null
+    },
+    "extratime": {
+      "home": null,
+      "away": null
+    },
+    "penalty": {
+      "home": null,
+      "away": null
+    }
+  }
+}
