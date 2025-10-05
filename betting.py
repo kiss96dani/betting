@@ -2646,80 +2646,378 @@ def gather_bayes_history(root: Path, days: int)->List[dict]:
     return dataset
 
 # =========================================================
+# Helper functions for market extraction and aggregation
+# =========================================================
+MAX_ODDS_IGNORE = 500.0
+
+def safe_float(val: Any) -> Optional[float]:
+    """Safely convert a value to float, returning None on failure."""
+    if val is None:
+        return None
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return None
+
+def patch_ft_targets(result: dict) -> None:
+    """
+    Placeholder function to populate FT (full-time) targets across the result structure.
+    Currently a no-op, but can be extended to extract actual FT scores from primary_fixture.json.
+    """
+    # Future: Extract FT scores and populate result with actual targets
+    pass
+
+def _canonical_market_type_and_key(bet_name: str, raw_value: str) -> Tuple[str, str, Dict[str, Any]]:
+    """
+    Best-effort canonicalizer for common betting markets.
+    
+    Args:
+        bet_name: The name of the bet from API (e.g., "Match Winner", "Both Teams Score")
+        raw_value: The value/selection within that bet (e.g., "Home", "Yes", "Over 2.5")
+    
+    Returns:
+        Tuple of (market_type, market_key, meta_dict)
+        - market_type: One of 1X2, BTTS, OU, CORNERS, CARDS, PENALTIES, SCORE, OTHER
+        - market_key: Unique identifier for aggregation (e.g., "1X2_home", "BTTS_yes", "OU_2.5_over")
+        - meta: Additional metadata (e.g., line value for over/under)
+    """
+    bet_name_l = bet_name.strip().lower()
+    raw_value_l = raw_value.strip().lower()
+    
+    meta: Dict[str, Any] = {}
+    
+    # 1X2 / Match Winner
+    if bet_name_l in ("match winner", "1x2", "fulltime result", "winner"):
+        if "home" in raw_value_l:
+            return ("1X2", "1X2_home", meta)
+        elif "draw" in raw_value_l:
+            return ("1X2", "1X2_draw", meta)
+        elif "away" in raw_value_l:
+            return ("1X2", "1X2_away", meta)
+    
+    # BTTS (Both Teams To Score)
+    if ("both" in bet_name_l and "team" in bet_name_l and "score" in bet_name_l) or \
+       bet_name_l in ("btts", "goal/no goal", "goals - both teams to score"):
+        # Filter out half-time markets
+        if not any(k in bet_name_l for k in ("1st", "2nd", "first half", "second half", "1h", "2h", "half")):
+            if raw_value_l in ("yes", "goal"):
+                return ("BTTS", "BTTS_yes", meta)
+            elif raw_value_l in ("no", "no goal"):
+                return ("BTTS", "BTTS_no", meta)
+    
+    # Over/Under Goals
+    if "over" in bet_name_l or "under" in bet_name_l or "goals" in bet_name_l:
+        # Filter out corners, cards, penalties, halves
+        if not any(k in bet_name_l for k in ("corner", "card", "penalt", "1st", "2nd", "first half", "second half", "1h", "2h", "half")):
+            # Extract line value (e.g., "over 2.5" -> 2.5)
+            import re
+            line_match = re.search(r'(\d+\.?\d*)', raw_value_l)
+            if line_match:
+                line = line_match.group(1)
+                meta["line"] = line
+                if "over" in raw_value_l:
+                    return ("OU", f"OU_{line}_over", meta)
+                elif "under" in raw_value_l:
+                    return ("OU", f"OU_{line}_under", meta)
+    
+    # Corners
+    if "corner" in bet_name_l:
+        line_match = re.search(r'(\d+\.?\d*)', raw_value_l)
+        if line_match:
+            line = line_match.group(1)
+            meta["line"] = line
+            if "over" in raw_value_l:
+                return ("CORNERS", f"CORNERS_{line}_over", meta)
+            elif "under" in raw_value_l:
+                return ("CORNERS", f"CORNERS_{line}_under", meta)
+    
+    # Cards
+    if "card" in bet_name_l:
+        line_match = re.search(r'(\d+\.?\d*)', raw_value_l)
+        if line_match:
+            line = line_match.group(1)
+            meta["line"] = line
+            if "over" in raw_value_l:
+                return ("CARDS", f"CARDS_{line}_over", meta)
+            elif "under" in raw_value_l:
+                return ("CARDS", f"CARDS_{line}_under", meta)
+    
+    # Penalties
+    if "penalt" in bet_name_l:
+        meta["bet_name"] = bet_name
+        return ("PENALTIES", f"PENALTIES_{raw_value_l}", meta)
+    
+    # Exact Score
+    if "exact" in bet_name_l and "score" in bet_name_l:
+        meta["score"] = raw_value
+        return ("SCORE", f"SCORE_{raw_value_l.replace(' ', '_')}", meta)
+    
+    # Fallback to OTHER
+    meta["bet_name"] = bet_name
+    meta["value"] = raw_value
+    return ("OTHER", f"OTHER_{bet_name_l}_{raw_value_l}".replace(" ", "_")[:100], meta)
+
+def extract_all_markets_from_raw(raw_api_block: dict) -> List[Dict]:
+    """
+    Iterate through raw API-Football response blocks (odds__* files) and extract all market offers.
+    
+    Args:
+        raw_api_block: The raw API response (e.g., from odds__*.json file)
+    
+    Returns:
+        List of offer dictionaries with keys: bookmaker, bet_name, value, odd, market_type, market_key, meta
+    """
+    offers = []
+    
+    if not raw_api_block:
+        return offers
+    
+    response = raw_api_block.get("response", [])
+    if not response:
+        return offers
+    
+    for item in response:
+        bookmakers = item.get("bookmakers", [])
+        for bookmaker in bookmakers:
+            bookmaker_name = bookmaker.get("name", "Unknown")
+            bets = bookmaker.get("bets", [])
+            
+            for bet in bets:
+                bet_name = bet.get("name", "")
+                values = bet.get("values", [])
+                
+                for value_obj in values:
+                    raw_value = value_obj.get("value", "")
+                    odd_raw = value_obj.get("odd")
+                    odd = safe_float(odd_raw)
+                    
+                    if odd is None or odd <= 0 or odd >= MAX_ODDS_IGNORE:
+                        continue
+                    
+                    market_type, market_key, meta = _canonical_market_type_and_key(bet_name, raw_value)
+                    
+                    offers.append({
+                        "bookmaker": bookmaker_name,
+                        "bet_name": bet_name,
+                        "value": raw_value,
+                        "odd": odd,
+                        "market_type": market_type,
+                        "market_key": market_key,
+                        "meta": meta
+                    })
+    
+    return offers
+
+def aggregate_market_offers(offers: List[Dict]) -> Dict[str, Dict]:
+    """
+    Aggregate market offers by market_key and compute statistics.
+    
+    Args:
+        offers: List of offer dictionaries from extract_all_markets_from_raw
+    
+    Returns:
+        Dictionary mapping market_key to aggregated statistics:
+        - odds_median, odds_mean, odds_std, odds_min, odds_max
+        - count: number of bookmakers offering this market
+        - bookmakers: list of bookmaker names
+        - top_bookmaker: bookmaker with best (highest) odd
+        - top_odd: highest odd value
+        - implied_prob: 1/median_odd
+        - market_type, meta from canonical function
+    """
+    from statistics import median, mean, stdev
+    
+    # Group offers by market_key
+    grouped: Dict[str, List[Dict]] = {}
+    for offer in offers:
+        market_key = offer["market_key"]
+        if market_key not in grouped:
+            grouped[market_key] = []
+        grouped[market_key].append(offer)
+    
+    # Compute statistics for each market
+    aggregated = {}
+    for market_key, market_offers in grouped.items():
+        odds_list = [o["odd"] for o in market_offers]
+        bookmakers_list = [o["bookmaker"] for o in market_offers]
+        
+        # Find top bookmaker (highest odd)
+        top_offer = max(market_offers, key=lambda x: x["odd"])
+        top_bookmaker = top_offer["bookmaker"]
+        top_odd = top_offer["odd"]
+        
+        # Get market_type and meta from first offer (should be same for all in group)
+        market_type = market_offers[0]["market_type"]
+        meta = market_offers[0]["meta"]
+        
+        # Compute statistics
+        odds_median = median(odds_list)
+        odds_mean = mean(odds_list)
+        odds_std = stdev(odds_list) if len(odds_list) > 1 else 0.0
+        odds_min = min(odds_list)
+        odds_max = max(odds_list)
+        
+        implied_prob = 1.0 / odds_median if odds_median > 0 else 0.0
+        
+        aggregated[market_key] = {
+            "market_type": market_type,
+            "market_key": market_key,
+            "odds_median": odds_median,
+            "odds_mean": odds_mean,
+            "odds_std": odds_std,
+            "odds_min": odds_min,
+            "odds_max": odds_max,
+            "count": len(odds_list),
+            "bookmakers": bookmakers_list,
+            "top_bookmaker": top_bookmaker,
+            "top_odd": top_odd,
+            "implied_prob": implied_prob,
+            "meta": meta
+        }
+    
+    return aggregated
+
+# =========================================================
 # Elemzés
 # =========================================================
 def analyze_fixture(root: Path, fixture_id: int, enhanced_tools: dict|None=None)->dict:
-    tup=build_fixture_context(root, fixture_id)
-    if not tup: return {}
-    ctx,extra=tup
-    enhanced_block={}
-    if ENABLE_ENHANCED_MODELING and enhanced_tools:
-        base_probs=ctx.probs
-        cald={}
-        ensemble_source={"base": base_probs}
-        if ENABLE_CALIBRATION and enhanced_tools.get("calibrators"):
-            for k in ("home","draw","away"):
-                co=enhanced_tools["calibrators"].get(k)
-                if co: cald[k]=co.transform(base_probs[k])
-                else: cald[k]={"raw":base_probs[k],"cal":base_probs[k],"used":"raw"}
-            calibrated={k: cald[k]["cal"] for k in cald}
-            enhanced_block["calibration"]=cald
-            ensemble_source["cal"]=calibrated
+    """
+    Simplified analyze_fixture that produces rich analysis.json with:
+    - raw_api_football: all raw API responses
+    - h2h_raw and h2h_summary: head-to-head data
+    - markets: aggregated market offers with statistics
+    - model_probs, market_probs, market_edge, market_prob_details: model-derived metrics
+    - feature_engineering.advanced_features: lambda_home/away and other features
+    
+    Does NOT perform ticket generation, image creation, or Telegram sending.
+    """
+    out_dir = root / f"out_fixture_{fixture_id}"
+    
+    # Load all raw API files
+    raw_api_football = {}
+    raw_dir = out_dir / "raw"
+    if raw_dir.exists():
+        for raw_file in raw_dir.glob("*.json"):
+            tag = raw_file.stem.rsplit("__", 1)[0]  # Remove hash suffix
+            data = load_json(raw_file)
+            if data:
+                raw_api_football[tag] = data
+    
+    # Extract H2H raw and create summary
+    h2h_raw = None
+    h2h_summary = []
+    for tag in ["h2h", "h2h_extended"]:
+        if tag in raw_api_football:
+            h2h_raw = raw_api_football[tag]
+            break
+    
+    if h2h_raw:
+        h2h_response = h2h_raw.get("response", [])
+        for match in h2h_response[:10]:  # Limit to 10 most recent
+            fixture = match.get("fixture", {})
+            teams = match.get("teams", {})
+            goals = match.get("goals", {})
+            h2h_summary.append({
+                "date": fixture.get("date", ""),
+                "home": teams.get("home", {}).get("name", ""),
+                "away": teams.get("away", {}).get("name", ""),
+                "score": f"{goals.get('home', 0)}-{goals.get('away', 0)}",
+                "status": fixture.get("status", {}).get("short", "")
+            })
+    
+    # Extract and aggregate markets from raw odds data
+    all_offers = []
+    for tag, data in raw_api_football.items():
+        if tag.startswith("odds"):
+            offers = extract_all_markets_from_raw(data)
+            all_offers.extend(offers)
+    
+    aggregated_markets = aggregate_market_offers(all_offers)
+    
+    # Build fixture context to get model-derived probabilities and metrics
+    advanced_features = {}
+    try:
+        tup = build_fixture_context(root, fixture_id)
+        if tup:
+            ctx, extra = tup
+            
+            # Populate advanced_features with lambda values and other metrics
+            advanced_features = {
+                "lambda_home": extra.get("lambda_home"),
+                "lambda_away": extra.get("lambda_away"),
+                "model_probs": ctx.probs,
+                "market_probs": extra.get("market_probs", {}),
+                "market_edge": extra.get("market_edge", {}),
+                "market_prob_details": extra.get("market_prob_details", {})
+            }
+            
+            # Build the result structure
+            tier = LEAGUE_MANAGER.tier_of(ctx.league_id) if ctx.league_id else None
+            result = {
+                "fixture_id": ctx.fixture_id,
+                "kickoff_utc": ctx.kickoff_utc.isoformat(),
+                "league_id": ctx.league_id,
+                "league_name": ctx.league_name,
+                "league_tier": tier,
+                "season": ctx.season,
+                "teams": {"home_id": ctx.home_team_id, "away_id": ctx.away_team_id},
+                "raw_api_football": raw_api_football,
+                "h2h_raw": h2h_raw,
+                "h2h_summary": h2h_summary,
+                "markets": aggregated_markets,
+                "model_probs": ctx.probs,
+                "odds": ctx.odds,
+                "fair_odds_model": ctx.fair_odds,
+                "edge": ctx.edge,
+                "kelly": ctx.kelly,
+                "home_rating": asdict(ctx.ratings_home),
+                "away_rating": asdict(ctx.ratings_away),
+                "lambda_home": extra["lambda_home"],
+                "lambda_away": extra["lambda_away"],
+                "market_probs": extra["market_probs"],
+                "market_odds": extra["market_odds"],
+                "market_edge": extra["market_edge"],
+                "injuries_hit_top": extra["injuries_hit_top"],
+                "market_prob_details": extra["market_prob_details"],
+                "feature_engineering": {
+                    "advanced_features": advanced_features
+                },
+                "generated_at": datetime.now(timezone.utc).isoformat()
+            }
         else:
-            calibrated=None
-        bayes_probs=None
-        if ENABLE_BAYES and enhanced_tools.get("bayes_model"):
-            bm=enhanced_tools["bayes_model"]
-            blams=bm.posterior_lambda_means(ctx.home_team_id, ctx.away_team_id)
-            if blams:
-                lbh,lba=blams
-                mc_bayes=run_mc_1x2(lbh,lba, sims=int(MC_SIMS/2))
-                bayes_probs={k: mc_bayes[k] for k in ("home","draw","away")}
-                enhanced_block["bayes_lambdas"]={"home":lbh,"away":lba}
-                enhanced_block["bayes_mc_probs"]=bayes_probs
-                ensemble_source["bayes"]=bayes_probs
-        mc_probs=None
-        if ENABLE_MC:
-            mc_all=run_mc_1x2(extra["lambda_home"], extra["lambda_away"], sims=MC_SIMS)
-            mc_probs={k: mc_all[k] for k in ("home","draw","away")}
-            enhanced_block["mc_full"]=mc_all
-            ensemble_source["mc"]=mc_probs
-        final_probs=ensemble_probs(
-            base=ensemble_source.get("base"),
-            cal=ensemble_source.get("cal"),
-            bayes=ensemble_source.get("bayes"),
-            mc=ensemble_source.get("mc"))
-        enhanced_block["ensemble_probs"]=final_probs
-        enhanced_block["weights_used"]=ENSEMBLE_WEIGHTS
-    out_dir=root / f"out_fixture_{fixture_id}"
-    tier=LEAGUE_MANAGER.tier_of(ctx.league_id) if ctx.league_id else None
-    result={
-        "fixture_id": ctx.fixture_id,
-        "kickoff_utc": ctx.kickoff_utc.isoformat(),
-        "league_id": ctx.league_id,
-        "league_name": ctx.league_name,
-        "league_tier": tier,
-        "season": ctx.season,
-        "teams": {"home_id": ctx.home_team_id, "away_id": ctx.away_team_id},
-        "model_probs": ctx.probs,
-        "odds": ctx.odds,
-        "fair_odds_model": ctx.fair_odds,
-        "edge": ctx.edge,
-        "kelly": ctx.kelly,
-        "home_rating": asdict(ctx.ratings_home),
-        "away_rating": asdict(ctx.ratings_away),
-        "lambda_home": extra["lambda_home"],
-        "lambda_away": extra["lambda_away"],
-        "market_probs": extra["market_probs"],
-        "market_odds": extra["market_odds"],
-        "market_edge": extra["market_edge"],
-        "injuries_hit_top": extra["injuries_hit_top"],
-        "market_prob_details": extra["market_prob_details"],  # (C)
-        "generated_at": datetime.now(timezone.utc).isoformat()
-    }
-    if enhanced_block:
-        result["enhanced_model"]=enhanced_block
-    safe_write_json(out_dir/"analysis.json", result)
+            # Context building failed, create minimal result
+            result = {
+                "fixture_id": fixture_id,
+                "raw_api_football": raw_api_football,
+                "h2h_raw": h2h_raw,
+                "h2h_summary": h2h_summary,
+                "markets": aggregated_markets,
+                "feature_engineering": {
+                    "advanced_features": advanced_features
+                },
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "error": "build_fixture_context failed"
+            }
+    except Exception as e:
+        logger.exception("Error in analyze_fixture for fixture %d", fixture_id)
+        result = {
+            "fixture_id": fixture_id,
+            "raw_api_football": raw_api_football,
+            "h2h_raw": h2h_raw,
+            "h2h_summary": h2h_summary,
+            "markets": aggregated_markets,
+            "feature_engineering": {
+                "advanced_features": advanced_features
+            },
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "error": str(e)
+        }
+    
+    # Call patch_ft_targets to populate FT targets
+    patch_ft_targets(result)
+    
+    # Save the result
+    safe_write_json(out_dir / "analysis.json", result)
     return result
 
 # =========================================================
