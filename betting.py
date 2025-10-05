@@ -2710,7 +2710,6 @@ def _canonical_market_type_and_key(bet_name: str, raw_value: str) -> Tuple[str, 
         # Filter out corners, cards, penalties, halves
         if not any(k in bet_name_l for k in ("corner", "card", "penalt", "1st", "2nd", "first half", "second half", "1h", "2h", "half")):
             # Extract line value (e.g., "over 2.5" -> 2.5)
-            import re
             line_match = re.search(r'(\d+\.?\d*)', raw_value_l)
             if line_match:
                 line = line_match.group(1)
