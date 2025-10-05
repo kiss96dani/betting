@@ -950,7 +950,7 @@ class TippmixOddsExtractor:
             if len(ocs)==3 and (btid in self.ONE_X_TWO_BTIDS or "1x2" in name or "eredmény" in name):
                 tmp={}
                 for oc in ocs:
-                    on=(oc.get("translatedName") or oc.get("name") or "").strip().lower()
+                    on=str(oc.get("translatedName") or oc.get("name") or "").strip().lower()
                     code=None
                     if on in ("1","hazai","home"): code="HOME"
                     elif on in ("x","döntetlen","draw"): code="DRAW"
@@ -1491,6 +1491,107 @@ def over25_probability(lambda_total: float) -> float:
 def safe_edge(prob: float, odds: float) -> float:
     if odds<=0 or prob<=0: return -1.0
     return prob*odds - 1
+
+def safe_float(value, default=0.0) -> float:
+    """Safely convert a value to float, returning default on error."""
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return default
+
+def _canonical_market_type_and_key(bet_name, raw_value):
+    """
+    Canonicalize market type and key from bet name and raw value.
+    Defensively converts inputs to strings before processing.
+    Returns: (market_type, market_key, metadata_dict)
+    """
+    try:
+        # Coerce to strings defensively
+        bet_name = str(bet_name or "")
+        raw_value = str(raw_value or "")
+        
+        # Strip and lowercase for comparison
+        bet_name_clean = bet_name.strip().lower()
+        raw_value_clean = raw_value.strip().lower()
+        
+        # Detect market type
+        if bet_name_clean in ("match winner", "1x2", "fulltime result"):
+            market_type = "1X2"
+            if raw_value_clean.startswith("home"):
+                market_key = "home"
+            elif raw_value_clean.startswith("draw"):
+                market_key = "draw"
+            elif raw_value_clean.startswith("away"):
+                market_key = "away"
+            else:
+                market_key = f"OTHER_{raw_value_clean}"
+        elif (("both" in bet_name_clean and "team" in bet_name_clean and "score" in bet_name_clean) 
+              or bet_name_clean in ("btts", "goal/no goal", "goals - both teams to score")):
+            # Exclude half-time markets
+            if any(k in bet_name_clean for k in ("1st", "2nd", "first half", "second half", "1h", "2h", "half", "extra", "corners", "penalt")):
+                market_type = "OTHER"
+                market_key = f"OTHER_{bet_name_clean}"
+            else:
+                market_type = "BTTS"
+                if raw_value_clean in ("yes", "goal"):
+                    market_key = "yes"
+                elif raw_value_clean in ("no", "no goal"):
+                    market_key = "no"
+                else:
+                    market_key = f"OTHER_{raw_value_clean}"
+        elif bet_name_clean in ("goals over/under", "over/under"):
+            market_type = "OU25"
+            if raw_value_clean == "over 2.5":
+                market_key = "over25"
+            elif raw_value_clean == "under 2.5":
+                market_key = "under25"
+            else:
+                market_key = f"OTHER_{raw_value_clean}"
+        else:
+            market_type = "OTHER"
+            market_key = f"OTHER_{bet_name_clean}"
+        
+        return (market_type, market_key, {"raw": raw_value})
+    except Exception:
+        # Fallback on any unexpected error
+        safe_key = str(raw_value or "").replace(" ", "_")[:50]
+        return ("OTHER", f"OTHER_{safe_key}", {"raw": raw_value})
+
+def extract_all_markets_from_raw(bookmaker_data):
+    """
+    Extract all markets from raw bookmaker data.
+    Ensures raw_value is coerced to string before passing to canonicalizer.
+    Returns: dict with market types and their values
+    """
+    markets = {}
+    
+    for bm in (bookmaker_data or []):
+        bets = bm.get("bets") or []
+        for b in bets:
+            bet_name = b.get("name")
+            values = b.get("values") or []
+            
+            for value_obj in values:
+                raw_value = value_obj.get("value")
+                # Coerce to string before passing to canonicalizer
+                raw_value_str = str(raw_value) if raw_value is not None else ""
+                
+                # Get odd value safely
+                odd = safe_float(value_obj.get("odd"))
+                
+                # Canonicalize
+                market_type, market_key, metadata = _canonical_market_type_and_key(bet_name, raw_value_str)
+                
+                # Store in markets dict
+                if market_type not in markets:
+                    markets[market_type] = {}
+                markets[market_type][market_key] = {
+                    "odd": odd,
+                    "raw_value": raw_value,
+                    "metadata": metadata
+                }
+    
+    return markets
 
 # ========== Enhanced Modeling ==========
 class OneVsRestCalibrator:
@@ -2378,12 +2479,12 @@ def build_fixture_context(root: Path, fixture_id: int):
                     bets=bm.get("bets") or []
                     cand_1x2=None; cand_btts_pair=(None,None); cand_ou_pair=(None,None)
                     for b in bets:
-                        name_l=(b.get("name") or "").strip().lower()
+                        name_l=str(b.get("name") or "").strip().lower()
                         values=b.get("values") or []
                         if name_l in ("match winner","1x2","fulltime result"):
                             tmp={}
                             for v in values:
-                                val=(v.get("value") or "").strip().lower()
+                                val=str(v.get("value") or "").strip().lower()
                                 try: odd=float(v.get("odd"))
                                 except: continue
                                 if val.startswith("home"): tmp["home"]=odd
@@ -2394,7 +2495,7 @@ def build_fixture_context(root: Path, fixture_id: int):
                              and not any(k in name_l for k in ("1st","2nd","first half","second half","1h","2h","half","extra","corners","penalt")):
                             yes_odd=no_odd=None
                             for v in values:
-                                val=(v.get("value") or "").strip().lower()
+                                val=str(v.get("value") or "").strip().lower()
                                 try: odd=float(v.get("odd"))
                                 except: continue
                                 if val in ("yes","goal"): yes_odd=odd
@@ -2404,7 +2505,7 @@ def build_fixture_context(root: Path, fixture_id: int):
                         elif name_l in ("goals over/under","over/under"):
                             over25=None; under25=None
                             for v in values:
-                                val=(v.get("value") or "").strip().lower()
+                                val=str(v.get("value") or "").strip().lower()
                                 try: odd=float(v.get("odd"))
                                 except: continue
                                 if val=="over 2.5": over25=odd
