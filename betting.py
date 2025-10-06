@@ -22,6 +22,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger("betting")
 
+# Enhanced feature engineering (after logger is defined)
+try:
+    from feature_engineering import AdvancedFeatureEngineer, extract_enhanced_features, create_feature_pipeline, AdvancedFeatures
+    HAVE_FEATURE_ENGINEERING = True
+    logger.info("Advanced feature engineering module loaded successfully")
+except ImportError:
+    HAVE_FEATURE_ENGINEERING = False
+    logger.warning("Feature engineering module not available")
+
 # ============= API-FOOTBALL CONF =================
 API_HOST = "v3.football.api-sports.io"
 API_BASE = os.getenv("API_BASE_URL", f"https://{API_HOST}")
@@ -147,6 +156,30 @@ BAYES_MIN_TEAM_MATCHES = int(os.getenv("BAYES_MIN_TEAM_MATCHES", "15"))
 BAYES_LAMBDA_MIN = float(os.getenv("BAYES_LAMBDA_MIN", "0.2"))
 BAYES_LAMBDA_MAX = float(os.getenv("BAYES_LAMBDA_MAX", "3.5"))
 BAYES_MAX_SECONDS = int(os.getenv("BAYES_MAX_SECONDS", "25"))  # sampling time limit
+
+# ============ Enhanced Feature Engineering Configuration ============
+ENABLE_FEATURE_ENGINEERING = os.getenv("ENABLE_FEATURE_ENGINEERING", "1") == "1"
+FEATURE_SCALING_METHOD = os.getenv("FEATURE_SCALING_METHOD", "standard")  # standard, minmax
+FEATURE_SELECTION_ENABLED = os.getenv("FEATURE_SELECTION_ENABLED", "1") == "1"
+FEATURE_PCA_COMPONENTS = int(os.getenv("FEATURE_PCA_COMPONENTS", "10"))
+FEATURE_CLUSTERING_ENABLED = os.getenv("FEATURE_CLUSTERING_ENABLED", "1") == "1" 
+FEATURE_CLUSTER_COUNT = int(os.getenv("FEATURE_CLUSTER_COUNT", "5"))
+
+# Advanced analytics endpoints
+FETCH_EXTENDED_STATS = os.getenv("FETCH_EXTENDED_STATS", "1") == "1"
+FETCH_TRANSFER_DATA = os.getenv("FETCH_TRANSFER_DATA", "0") == "1"  # More expensive calls
+FETCH_INJURY_DETAILS = os.getenv("FETCH_INJURY_DETAILS", "1") == "1"
+FETCH_COACH_INFO = os.getenv("FETCH_COACH_INFO", "0") == "1"
+
+# Feature engineering weights and thresholds
+FORM_DECAY_FACTOR = float(os.getenv("FORM_DECAY_FACTOR", "0.9"))  # Exponential decay for form
+MOMENTUM_WINDOW = int(os.getenv("MOMENTUM_WINDOW", "5"))  # Last N matches for momentum
+H2H_RELEVANCE_YEARS = int(os.getenv("H2H_RELEVANCE_YEARS", "3"))  # H2H data relevance
+ELO_K_FACTOR = float(os.getenv("ELO_K_FACTOR", "20"))  # ELO rating adjustment factor
+
+# Market analysis enhancement
+MARKET_EFFICIENCY_THRESHOLD = float(os.getenv("MARKET_EFFICIENCY_THRESHOLD", "0.95"))
+MIN_BOOKMAKER_COUNT = int(os.getenv("MIN_BOOKMAKER_COUNT", "3"))  # Minimum bookmakers for consensus
 
 # ============ Opcionális csomagok ============
 try:
@@ -1867,6 +1900,56 @@ class APIFootballClient:
                 except (aiohttp.ClientError, asyncio.TimeoutError):
                     await asyncio.sleep(1+attempt)
             return {"errors":["network_fail"],"response":[]}
+    
+    async def get_with_cache(self, endpoint: str, params: dict, cache_key: str = None) -> dict:
+        """Enhanced get method with caching capabilities"""
+        # Simple in-memory cache for this session
+        if not hasattr(self, '_cache'):
+            self._cache = {}
+        
+        cache_key = cache_key or f"{endpoint}_{hash(str(sorted(params.items())))}"
+        
+        if cache_key in self._cache:
+            logger.debug(f"Cache hit for {endpoint}")
+            return self._cache[cache_key]
+        
+        result = await self.get(endpoint, params)
+        self._cache[cache_key] = result
+        return result
+    
+    async def get_batch(self, requests: List[Tuple[str, str, dict]]) -> List[dict]:
+        """Batch API requests with enhanced rate limiting"""
+        results = []
+        
+        for tag, endpoint, params in requests:
+            try:
+                result = await self.get(endpoint, params)
+                results.append({"tag": tag, "data": result, "success": True})
+                
+                # Enhanced rate limiting for batch requests
+                if self.last_rate_headers:
+                    try:
+                        remain = int(self.last_rate_headers.get("x-ratelimit-requests-remaining", "5"))
+                        if remain < 2:  # More conservative for batch
+                            await asyncio.sleep(2.0)
+                        elif remain < 5:
+                            await asyncio.sleep(0.5)
+                    except:
+                        await asyncio.sleep(0.3)  # Default delay
+                        
+            except Exception as e:
+                logger.warning(f"Batch request failed for {tag}: {e}")
+                results.append({"tag": tag, "data": {}, "success": False, "error": str(e)})
+                
+        return results
+    
+    def get_rate_limit_status(self) -> dict:
+        """Get current rate limit status"""
+        return {
+            "remaining": self.last_rate_headers.get("x-ratelimit-requests-remaining", "unknown"),
+            "limit": self.last_rate_headers.get("x-ratelimit-requests-limit", "unknown"),
+            "reset": self.last_rate_headers.get("x-ratelimit-requests-reset", "unknown")
+        }
 
 # =========================================================
 # OddsAPI kliens - Liga adatok lekérésére
@@ -2653,6 +2736,36 @@ def analyze_fixture(root: Path, fixture_id: int, enhanced_tools: dict|None=None)
     if not tup: return {}
     ctx,extra=tup
     enhanced_block={}
+    
+    # Enhanced Feature Engineering Integration
+    feature_engineering_block = {}
+    if HAVE_FEATURE_ENGINEERING:
+        try:
+            # Load primary fixture data for feature engineering
+            primary_fixture_file = root / f"out_fixture_{fixture_id}" / "primary_fixture.json"
+            if primary_fixture_file.exists():
+                with open(primary_fixture_file, 'r', encoding='utf-8') as f:
+                    fixture_data = json.load(f)
+                
+                # Extract advanced features
+                advanced_features = extract_enhanced_features(root, fixture_data)
+                feature_engineering_block = {
+                    "advanced_features": asdict(advanced_features),
+                    "feature_extraction_timestamp": datetime.now(timezone.utc).isoformat(),
+                    "feature_engineering_version": "1.0"
+                }
+                
+                # Log feature engineering success
+                logger.debug(f"Advanced features extracted for fixture {fixture_id}: "
+                           f"attack_strength_diff={advanced_features.home_attack_strength - advanced_features.away_attack_strength:.3f}, "
+                           f"form_points_diff={advanced_features.home_form_points - advanced_features.away_form_points:.3f}")
+                
+        except Exception as e:
+            logger.warning(f"Feature engineering failed for fixture {fixture_id}: {e}")
+            feature_engineering_block = {"error": str(e), "feature_engineering_available": False}
+    else:
+        feature_engineering_block = {"feature_engineering_available": False}
+    
     if ENABLE_ENHANCED_MODELING and enhanced_tools:
         base_probs=ctx.probs
         cald={}
@@ -2719,6 +2832,8 @@ def analyze_fixture(root: Path, fixture_id: int, enhanced_tools: dict|None=None)
     }
     if enhanced_block:
         result["enhanced_model"]=enhanced_block
+    if feature_engineering_block:
+        result["feature_engineering"]=feature_engineering_block
     safe_write_json(out_dir/"analysis.json", result)
     return result
 
@@ -3653,25 +3768,59 @@ async def refetch_single_fixture(client: APIFootballClient, fixture_id: int, roo
 # FETCH fixture bundle
 # =========================================================
 FIXTURE_ENDPOINTS = [
+    # Core fixture data
     ("fixture", "/fixtures", {"id": "<FIXTURE_ID>"}),
     ("predictions", "/predictions", {"fixture": "<FIXTURE_ID>"}),
     ("odds", "/odds", {"fixture": "<FIXTURE_ID>"}),
+    
+    # Head-to-head and form analysis  
     ("h2h", "/fixtures/headtohead", {"h2h": "<HOME_ID>-<AWAY_ID>", "last":"10"}),
+    ("h2h_extended", "/fixtures/headtohead", {"h2h": "<HOME_ID>-<AWAY_ID>", "last":"20"}),
     ("form_home_last", "/fixtures", {"team": "<HOME_ID>", "last": 10}),
     ("form_away_last", "/fixtures", {"team": "<AWAY_ID>", "last": 10}),
+    ("form_home_extended", "/fixtures", {"team": "<HOME_ID>", "last": 20}),
+    ("form_away_extended", "/fixtures", {"team": "<AWAY_ID>", "last": 20}),
+    
+    # Team and player information
     ("squad_home", "/players/squads", {"team": "<HOME_ID>"}),
     ("squad_away", "/players/squads", {"team": "<AWAY_ID>"}),
     ("team_home_info", "/teams", {"id": "<HOME_ID>"}),
     ("team_away_info", "/teams", {"id": "<AWAY_ID>"}),
+    
+    # League context
     ("topscorers_primary", "/players/topscorers", {"league": "<LEAGUE_ID>", "season": "<SEASON>"}),
     ("standings_primary", "/standings", {"league": "<LEAGUE_ID>", "season": "<SEASON>"}),
     ("team_stats_home", "/teams/statistics", {"league": "<LEAGUE_ID>", "season": "<SEASON>", "team": "<HOME_ID>"}),
     ("team_stats_away", "/teams/statistics", {"league": "<LEAGUE_ID>", "season": "<SEASON>", "team": "<AWAY_ID>"}),
+    
+    # Enhanced statistics and analysis
+    ("team_home_seasons", "/teams/seasons", {"team": "<HOME_ID>"}),
+    ("team_away_seasons", "/teams/seasons", {"team": "<AWAY_ID>"}),
+    ("team_home_venues", "/venues", {"id": "<HOME_VENUE_ID>"}),
+    ("league_info", "/leagues", {"id": "<LEAGUE_ID>"}),
+    ("coach_home", "/coachs", {"team": "<HOME_ID>"}),
+    ("coach_away", "/coachs", {"team": "<AWAY_ID>"}),
+    
+    # Injuries and player availability
     ("injuries_league", "/injuries", {"league":"<LEAGUE_ID>", "season":"<SEASON>"}),
+    ("injuries_home", "/injuries", {"team": "<HOME_ID>"}),
+    ("injuries_away", "/injuries", {"team": "<AWAY_ID>"}),
+    
+    # Fixture-specific detailed data
     ("fixture_events", "/fixtures/events", {"fixture":"<FIXTURE_ID>"}),
     ("fixture_lineups", "/fixtures/lineups", {"fixture":"<FIXTURE_ID>"}),
     ("fixture_statistics", "/fixtures/statistics", {"fixture":"<FIXTURE_ID>"}),
     ("fixture_players_stats", "/fixtures/players", {"fixture":"<FIXTURE_ID>"}),
+    
+    # Advanced metrics (if available)
+    ("team_home_transfers", "/transfers", {"team": "<HOME_ID>"}),
+    ("team_away_transfers", "/transfers", {"team": "<AWAY_ID>"}),
+    ("sidelined_home", "/sidelined", {"team": "<HOME_ID>"}),
+    ("sidelined_away", "/sidelined", {"team": "<AWAY_ID>"}),
+    
+    # Additional context for better predictions
+    ("team_home_countries", "/teams/countries"),
+    ("timezone_info", "/timezone"),
 ]
 
 async def fetch_fixture_bundle(client: APIFootballClient, fx_obj: dict, root: Path):
@@ -3697,11 +3846,14 @@ async def fetch_fixture_bundle(client: APIFootballClient, fx_obj: dict, root: Pa
         params={}
         for k,v in param_tpl.items():
             if isinstance(v,str):
+                # Get venue ID from fixture data
+                home_venue_id = fixture.get("venue", {}).get("id", "")
                 v2=(v.replace("<FIXTURE_ID>", str(fid))
                       .replace("<LEAGUE_ID>", str(league_id))
                       .replace("<SEASON>", str(season))
                       .replace("<HOME_ID>", str(home_id))
-                      .replace("<AWAY_ID>", str(away_id)))
+                      .replace("<AWAY_ID>", str(away_id))
+                      .replace("<HOME_VENUE_ID>", str(home_venue_id)))
                 params[k]=v2
             else:
                 params[k]=v
@@ -4346,6 +4498,18 @@ async def run_pipeline(fetch: bool, analyze: bool,
             stats_path = DATA_ROOT / f"comprehensive_stats_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
             generate_comprehensive_stats(analyzed_res, stats_path)
             logger.info("Comprehensive statistics generated: %s", stats_path.name)
+            
+            # Generate enhanced statistics with feature engineering insights
+            if ENABLE_FEATURE_ENGINEERING and HAVE_FEATURE_ENGINEERING:
+                enhanced_stats_path = DATA_ROOT / f"enhanced_stats_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
+                enhanced_stats = generate_enhanced_statistics(analyzed_res, enhanced_stats_path)
+                logger.info("Enhanced statistics with feature engineering generated: %s", enhanced_stats_path.name)
+                
+                # Generate feature importance analysis
+                importance_path = DATA_ROOT / f"feature_importance_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
+                importance_analysis = analyze_feature_importance(analyzed_res)
+                safe_write_json(importance_path, importance_analysis)
+                logger.info("Feature importance analysis generated: %s", importance_path.name)
     RUNTIME_STATE["last_run"]=datetime.now(timezone.utc).isoformat()
     save_state()
     summary={
@@ -5028,6 +5192,230 @@ def main():
         ))
     except KeyboardInterrupt:
         logger.info("Megszakítva felhasználó által.")
+
+# =========================================================
+# Enhanced Statistics and Analytics with Feature Engineering
+# =========================================================
+def generate_enhanced_statistics(analysis_results: List[dict], output_file: Path):
+    """Generate comprehensive statistics using enhanced features"""
+    if not analysis_results:
+        logger.warning("No analysis results for enhanced statistics")
+        return
+    
+    stats = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "total_fixtures": len(analysis_results),
+        "feature_engineering_enabled": HAVE_FEATURE_ENGINEERING,
+        "enhanced_modeling_enabled": ENABLE_ENHANCED_MODELING,
+        "summary": {},
+        "league_breakdown": {},
+        "team_performance": {},
+        "feature_insights": {},
+        "market_analysis": {}
+    }
+    
+    # Basic statistics
+    total_edges = []
+    kelly_values = []
+    league_stats = {}
+    team_stats = {}
+    feature_data = []
+    
+    for result in analysis_results:
+        # Collect edge and kelly data
+        edge_data = result.get("edge", {})
+        kelly_data = result.get("kelly", {})
+        
+        for market in ["home", "draw", "away"]:
+            if market in edge_data:
+                total_edges.append(edge_data[market])
+            if market in kelly_data:
+                kelly_values.append(kelly_data[market])
+        
+        # League breakdown
+        league_id = result.get("league_id")
+        if league_id:
+            if league_id not in league_stats:
+                league_stats[league_id] = {
+                    "fixture_count": 0,
+                    "league_name": result.get("league_name", f"League_{league_id}"),
+                    "tier": result.get("league_tier"),
+                    "avg_edge": 0,
+                    "total_edge": 0
+                }
+            league_stats[league_id]["fixture_count"] += 1
+            if edge_data:
+                max_edge = max([edge_data.get(m, 0) for m in ["home", "draw", "away"]])
+                league_stats[league_id]["total_edge"] += max_edge
+        
+        # Team performance
+        teams = result.get("teams", {})
+        home_id = teams.get("home_id")
+        away_id = teams.get("away_id")
+        
+        for team_id in [home_id, away_id]:
+            if team_id and team_id not in team_stats:
+                team_stats[team_id] = {
+                    "fixture_count": 0,
+                    "total_edge": 0,
+                    "avg_lambda": 0,
+                    "lambda_count": 0
+                }
+            if team_id:
+                team_stats[team_id]["fixture_count"] += 1
+                
+        # Collect feature engineering data
+        fe_data = result.get("feature_engineering", {})
+        if fe_data and "advanced_features" in fe_data:
+            feature_data.append(fe_data["advanced_features"])
+    
+    # Calculate summary statistics
+    if total_edges:
+        stats["summary"] = {
+            "avg_edge": np.mean(total_edges) if np else sum(total_edges) / len(total_edges),
+            "max_edge": max(total_edges),
+            "min_edge": min(total_edges),
+            "positive_edges": len([e for e in total_edges if e > 0]),
+            "edge_std": np.std(total_edges) if np else 0
+        }
+    
+    if kelly_values:
+        stats["summary"]["avg_kelly"] = np.mean(kelly_values) if np else sum(kelly_values) / len(kelly_values)
+        stats["summary"]["max_kelly"] = max(kelly_values)
+    
+    # League breakdown with averages
+    for league_id, data in league_stats.items():
+        if data["fixture_count"] > 0:
+            data["avg_edge"] = data["total_edge"] / data["fixture_count"]
+    stats["league_breakdown"] = league_stats
+    
+    # Team performance summary
+    stats["team_performance"] = {
+        "total_teams": len(team_stats),
+        "most_analyzed_teams": sorted(
+            [(tid, data["fixture_count"]) for tid, data in team_stats.items()],
+            key=lambda x: x[1], reverse=True
+        )[:10]
+    }
+    
+    # Feature engineering insights
+    if feature_data and HAVE_FEATURE_ENGINEERING:
+        try:
+            df_features = pd.DataFrame(feature_data)
+            
+            # Calculate feature correlations and insights
+            numeric_cols = df_features.select_dtypes(include=[np.number]).columns
+            if len(numeric_cols) > 0:
+                stats["feature_insights"] = {
+                    "total_features": len(numeric_cols),
+                    "feature_summary": {},
+                    "correlation_highlights": []
+                }
+                
+                for col in numeric_cols[:20]:  # Limit to first 20 features
+                    values = df_features[col].dropna()
+                    if len(values) > 0:
+                        stats["feature_insights"]["feature_summary"][col] = {
+                            "mean": float(values.mean()),
+                            "std": float(values.std()),
+                            "min": float(values.min()),
+                            "max": float(values.max())
+                        }
+                
+                # Find interesting correlations
+                if len(df_features) > 1:
+                    corr_matrix = df_features[numeric_cols].corr()
+                    high_corr = []
+                    for i in range(len(corr_matrix.columns)):
+                        for j in range(i+1, len(corr_matrix.columns)):
+                            corr_val = corr_matrix.iloc[i, j]
+                            if abs(corr_val) > 0.7:  # High correlation threshold
+                                high_corr.append({
+                                    "feature1": corr_matrix.columns[i],
+                                    "feature2": corr_matrix.columns[j],
+                                    "correlation": float(corr_val)
+                                })
+                    stats["feature_insights"]["correlation_highlights"] = high_corr[:10]
+                    
+        except Exception as e:
+            logger.warning(f"Feature insights generation failed: {e}")
+            stats["feature_insights"] = {"error": str(e)}
+    
+    # Market analysis
+    market_odds = []
+    market_edges = []
+    for result in analysis_results:
+        market_data = result.get("market_odds", {})
+        edge_data = result.get("edge", {})
+        
+        for market in ["home", "draw", "away"]:
+            if market in market_data:
+                market_odds.append(market_data[market])
+            if market in edge_data:
+                market_edges.append(edge_data[market])
+    
+    if market_odds:
+        stats["market_analysis"] = {
+            "avg_odds": np.mean(market_odds) if np else sum(market_odds) / len(market_odds),
+            "odds_range": [min(market_odds), max(market_odds)],
+            "market_efficiency": len([e for e in market_edges if abs(e) < 0.05]) / len(market_edges) if market_edges else 0
+        }
+    
+    # Save enhanced statistics
+    safe_write_json(output_file, stats)
+    logger.info(f"Enhanced statistics generated: {output_file}")
+    
+    return stats
+
+def analyze_feature_importance(analysis_results: List[dict]) -> dict:
+    """Analyze which features are most predictive"""
+    if not HAVE_FEATURE_ENGINEERING or not analysis_results:
+        return {"error": "Feature engineering not available or no data"}
+    
+    try:
+        # Extract features and outcomes
+        features_list = []
+        outcomes = []
+        
+        for result in analysis_results:
+            fe_data = result.get("feature_engineering", {})
+            if "advanced_features" in fe_data:
+                features_list.append(fe_data["advanced_features"])
+                
+                # Simple outcome: positive edge
+                edge_data = result.get("edge", {})
+                max_edge = max([edge_data.get(m, 0) for m in ["home", "draw", "away"]])
+                outcomes.append(1 if max_edge > 0.05 else 0)  # Binary outcome
+        
+        if len(features_list) < 10:  # Need minimum data
+            return {"error": "Insufficient data for feature importance analysis"}
+        
+        # Create feature matrix
+        df_features = pd.DataFrame(features_list)
+        numeric_features = df_features.select_dtypes(include=[np.number]).fillna(0)
+        
+        if len(numeric_features.columns) == 0:
+            return {"error": "No numeric features available"}
+        
+        # Simple correlation-based feature importance
+        feature_importance = {}
+        for col in numeric_features.columns:
+            corr = np.corrcoef(numeric_features[col], outcomes)[0, 1]
+            if not np.isnan(corr):
+                feature_importance[col] = abs(corr)
+        
+        # Sort by importance
+        sorted_features = sorted(feature_importance.items(), key=lambda x: x[1], reverse=True)
+        
+        return {
+            "top_features": sorted_features[:15],
+            "total_features_analyzed": len(feature_importance),
+            "analysis_timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Feature importance analysis failed: {e}")
+        return {"error": str(e)}
 
 
 # ====== VÉGPONT =======/
