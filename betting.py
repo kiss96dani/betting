@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 from aiohttp import ClientTimeout
 import concurrent.futures
 from PIL import ImageFilter
+from market_extensions import extract_dynamic_markets, compute_probs_for_dynamic_markets, flatten_market_dicts
 
 # ================= LOGGING =================
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -2719,6 +2720,82 @@ def analyze_fixture(root: Path, fixture_id: int, enhanced_tools: dict|None=None)
     }
     if enhanced_block:
         result["enhanced_model"]=enhanced_block
+    
+    # ============= FEATURE ENGINEERING: ADVANCED FEATURES =================
+    # Build advanced_features with ctx and extra data
+    advanced_features = {}
+    try:
+        # Populate from context and extra
+        advanced_features["lambda_home"] = extra.get("lambda_home", 0.05)
+        advanced_features["lambda_away"] = extra.get("lambda_away", 0.05)
+        advanced_features["model_prob"] = ctx.probs.get("home", 0.0)
+        advanced_features["model_edge"] = ctx.edge.get("home", 0.0)
+        
+        # Copy market data from extra
+        for key, val in extra.get("market_probs", {}).items():
+            advanced_features[f"market_prob_{key}"] = val
+        for key, val in extra.get("market_edge", {}).items():
+            advanced_features[f"market_edge_{key}"] = val
+    except Exception:
+        pass
+    
+    # ============= DYNAMIC MARKETS EXTRACTION =================
+    # Extract and compute dynamic markets from raw odds data
+    try:
+        # Load raw odds data
+        raw_files = [f for f in (out_dir / "raw").glob("odds__*.json")] if (out_dir / "raw").exists() else []
+        raw_data = {}
+        if raw_files:
+            try:
+                with open(raw_files[0], 'r', encoding='utf-8') as f:
+                    raw_data = json.load(f)
+            except Exception:
+                pass
+        
+        odds_raw = raw_data.get("odds", {})
+        odds_resp = odds_raw.get("response", []) if isinstance(odds_raw, dict) else []
+        if not odds_resp:
+            # Try direct response key
+            odds_resp = raw_data.get("response", []) if isinstance(raw_data, dict) else []
+        
+        # Extract dynamic markets
+        dynamic_markets = extract_dynamic_markets(odds_resp)
+        
+        # Build model context
+        model_ctx = {
+            "lambda_home": advanced_features.get("lambda_home", 0.05),
+            "lambda_away": advanced_features.get("lambda_away", 0.05),
+            "lambda_total": float(advanced_features.get("lambda_home", 0.0) or 0.0) + float(advanced_features.get("lambda_away", 0.0) or 0.0),
+            "corners_total": advanced_features.get("corners_total_avg", None),
+            "lambda_cards": advanced_features.get("lambda_cards", 0.9)
+        }
+        
+        # Compute probabilities and edges
+        m_probs, m_edges, m_details = compute_probs_for_dynamic_markets(dynamic_markets, model_ctx)
+        
+        # Flatten the dictionaries
+        flat_probs, flat_edges = flatten_market_dicts(m_probs, m_edges)
+        
+        # Write flattened probs and edges into advanced_features
+        for k, v in flat_probs.items():
+            safe_key = k.replace(':', '_')
+            advanced_features[f"model_prob_{safe_key}"] = v
+        
+        for k, v in flat_edges.items():
+            safe_key = k.replace(':', '_')
+            advanced_features[f"model_edge_{safe_key}"] = v
+        
+        # Store details
+        advanced_features['dynamic_market_details'] = m_details
+    except Exception:
+        # Avoid breaking analysis on errors
+        pass
+    
+    # Add feature_engineering section to result
+    result["feature_engineering"] = {
+        "advanced_features": advanced_features
+    }
+    
     safe_write_json(out_dir/"analysis.json", result)
     return result
 
