@@ -125,6 +125,29 @@ class MarketNormalizer:
         "teams to score"
     ]
     
+    # Handicap patterns
+    HANDICAP_PATTERNS = [
+        "asian handicap",
+        "handicap",
+        "asian hcp",
+        "ah"
+    ]
+    
+    # Correct Score patterns
+    CORRECT_SCORE_PATTERNS = [
+        "correct score",
+        "exact score",
+        "score"
+    ]
+    
+    # Half Time / Full Time patterns
+    HT_FT_PATTERNS = [
+        "halftime/fulltime",
+        "half time/full time",
+        "ht/ft",
+        "halftime fulltime"
+    ]
+    
     @staticmethod
     def normalize_selection_name(name: str) -> str:
         """Normalize selection/outcome names to standard format"""
@@ -157,6 +180,11 @@ class MarketNormalizer:
             return "YES"
         elif name_lower in ("no", "n", "no goal", "nem", "neither"):
             return "NO"
+        
+        # Handicap selections
+        elif any(x in name_lower for x in ["+", "−", "-"]) and any(c.isdigit() for c in name_lower):
+            # Try to extract handicap value
+            return name.strip().upper()
         
         # Return normalized version if not matched
         return name.strip().upper()
@@ -300,6 +328,90 @@ class MarketNormalizer:
                     raw_name=market_name
                 )
         
+        # Try to match Asian Handicap
+        elif any(pattern in name_lower for pattern in cls.HANDICAP_PATTERNS):
+            # Extract handicap value from market name first
+            threshold = cls.extract_threshold_from_name(market_name)
+            
+            # If not in name, try to extract from values
+            if threshold is None:
+                for val in values:
+                    val_name = val.get("value", "")
+                    extracted = cls.extract_threshold_from_name(val_name)
+                    if extracted:
+                        threshold = extracted
+                        break
+            
+            selections = {}
+            for val in values:
+                sel_name = val.get("value", "").strip()
+                try:
+                    odd = float(val.get("odd", 0))
+                    if odd > 0:
+                        # Keep raw selection for handicap (e.g., "Home -1.5", "Away +1.5")
+                        selections[sel_name] = odd
+                except (ValueError, TypeError):
+                    continue
+            
+            if len(selections) == 2 and threshold is not None:
+                market_key = f"Handicap:{threshold}"
+                return NormalizedMarket(
+                    market_key=market_key,
+                    market_type="Handicap",
+                    selections=selections,
+                    threshold=threshold,
+                    bookmaker=bookmaker,
+                    raw_name=market_name
+                )
+        
+        # Try to match HT/FT (Half Time / Full Time)
+        elif any(pattern in name_lower for pattern in cls.HT_FT_PATTERNS):
+            selections = {}
+            for val in values:
+                sel_name = val.get("value", "").strip()
+                try:
+                    odd = float(val.get("odd", 0))
+                    if odd > 0:
+                        # Keep raw selection for HT/FT (e.g., "Home/Home", "Draw/Away")
+                        selections[sel_name] = odd
+                except (ValueError, TypeError):
+                    continue
+            
+            if len(selections) >= 3:  # HT/FT typically has 9 outcomes
+                return NormalizedMarket(
+                    market_key="HT/FT",
+                    market_type="HT/FT",
+                    selections=selections,
+                    bookmaker=bookmaker,
+                    raw_name=market_name
+                )
+        
+        # Try to match Correct Score
+        elif any(pattern in name_lower for pattern in cls.CORRECT_SCORE_PATTERNS):
+            # Only match if it's the main correct score market, not corners or other variants
+            if any(exclude in name_lower for exclude in ["corner", "card", "booking"]):
+                return None
+            
+            selections = {}
+            for val in values:
+                sel_name = val.get("value", "").strip()
+                try:
+                    odd = float(val.get("odd", 0))
+                    if odd > 0:
+                        # Keep raw selection for correct score (e.g., "1-0", "2-1")
+                        selections[sel_name] = odd
+                except (ValueError, TypeError):
+                    continue
+            
+            if len(selections) >= 3:
+                return NormalizedMarket(
+                    market_key="CorrectScore",
+                    market_type="CorrectScore",
+                    selections=selections,
+                    bookmaker=bookmaker,
+                    raw_name=market_name
+                )
+        
         return None
 
 
@@ -358,8 +470,17 @@ def calculate_margin(selections: Dict[str, float]) -> float:
         return 999.0
 
 
-def load_analysis_files(data_root: Path) -> List[Dict]:
-    """Load all analysis.json files from fixture directories"""
+def load_analysis_files(data_root: Path, include_raw_odds: bool = False) -> List[Dict]:
+    """
+    Load all analysis.json files from fixture directories
+    
+    Args:
+        data_root: Root directory containing fixture folders
+        include_raw_odds: If True, also load and parse raw odds files
+    
+    Returns:
+        List of dicts containing analysis data and optionally raw odds
+    """
     results = []
     
     for fixture_dir in data_root.glob("out_fixture_*"):
@@ -373,11 +494,30 @@ def load_analysis_files(data_root: Path) -> List[Dict]:
         try:
             with open(analysis_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-                results.append({
+                
+                item = {
                     "fixture_id": data.get("fixture_id"),
                     "path": analysis_file,
                     "data": data
-                })
+                }
+                
+                # Optionally load raw odds
+                if include_raw_odds:
+                    raw_dir = fixture_dir / "raw"
+                    if raw_dir.exists():
+                        for odds_file in raw_dir.glob("odds*.json"):
+                            try:
+                                with open(odds_file, 'r', encoding='utf-8') as of:
+                                    odds_data = json.load(of)
+                                    odds_response = odds_data.get("response", [])
+                                    if odds_response:
+                                        normalized_markets = extract_bookmaker_odds_from_odds_response(odds_response)
+                                        item["normalized_markets"] = normalized_markets
+                                        break
+                            except Exception as e:
+                                logger.debug(f"Failed to load odds from {odds_file}: {e}")
+                
+                results.append(item)
         except Exception as e:
             logger.error(f"Failed to load {analysis_file}: {e}")
     
@@ -589,6 +729,54 @@ def format_ticket_display(picks: List[TicketPick]) -> str:
     return "\n".join(lines)
 
 
+def generate_market_coverage_report(analysis_files: List[Dict]) -> str:
+    """Generate a report showing market coverage across analysis files"""
+    lines = []
+    lines.append("=" * 80)
+    lines.append("MARKET COVERAGE REPORT")
+    lines.append("=" * 80)
+    lines.append("")
+    
+    total_fixtures = len(analysis_files)
+    market_stats = {
+        "1X2": 0,
+        "BTTS": 0,
+        "O/U 2.5": 0,
+        "O/U 1.5": 0,
+        "O/U 3.5": 0,
+        "Double Chance": 0,
+        "Handicap": 0,
+        "Other": 0
+    }
+    
+    for item in analysis_files:
+        data = item.get("data", {})
+        
+        # Check 1X2
+        if data.get("odds"):
+            market_stats["1X2"] += 1
+        
+        # Check 2-way markets
+        market_odds = data.get("market_odds", {})
+        if "btts_yes" in market_odds or "btts_no" in market_odds:
+            market_stats["BTTS"] += 1
+        if "over25" in market_odds or "under25" in market_odds:
+            market_stats["O/U 2.5"] += 1
+    
+    lines.append(f"Total fixtures analyzed: {total_fixtures}")
+    lines.append("")
+    lines.append("Market Availability:")
+    for market, count in market_stats.items():
+        if count > 0:
+            percentage = (count / total_fixtures * 100) if total_fixtures > 0 else 0
+            lines.append(f"  {market:20s}: {count:3d} / {total_fixtures:3d} ({percentage:5.1f}%)")
+    
+    lines.append("")
+    lines.append("=" * 80)
+    
+    return "\n".join(lines)
+
+
 def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(
@@ -603,6 +791,16 @@ def main():
         "--check",
         action="store_true",
         help="Check analysis files for completeness and quality"
+    )
+    parser.add_argument(
+        "--report",
+        action="store_true",
+        help="Generate market coverage report"
+    )
+    parser.add_argument(
+        "--markets",
+        action="store_true",
+        help="Show all available markets from raw odds files"
     )
     parser.add_argument(
         "--data-root",
@@ -638,12 +836,39 @@ def main():
     
     # Load analysis files
     logger.info(f"Loading analysis files from {args.data_root}")
-    analysis_files = load_analysis_files(args.data_root)
+    include_odds = args.markets  # Load raw odds if markets mode
+    analysis_files = load_analysis_files(args.data_root, include_raw_odds=include_odds)
     logger.info(f"Loaded {len(analysis_files)} analysis files")
     
     if not analysis_files:
         logger.warning("No analysis files found")
         return 1
+    
+    # Mode: Markets
+    if args.markets:
+        logger.info("Showing available markets from raw odds files...")
+        
+        for item in analysis_files:
+            fixture_id = item.get("fixture_id", "unknown")
+            normalized = item.get("normalized_markets", {})
+            
+            if normalized:
+                print(f"\nFixture {fixture_id}:")
+                for market_key, market in normalized.items():
+                    print(f"  {market_key:20s} [{market.bookmaker or 'N/A'}]")
+                    for sel, odd in market.selections.items():
+                        print(f"    {sel:15s}: {odd:.2f}")
+            else:
+                print(f"\nFixture {fixture_id}: No odds data available")
+        
+        return 0
+    
+    # Mode: Report
+    if args.report:
+        logger.info("Generating market coverage report...")
+        report = generate_market_coverage_report(analysis_files)
+        print(report)
+        return 0
     
     # Mode: Check
     if args.check:
