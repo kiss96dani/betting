@@ -1488,6 +1488,89 @@ def btts_probability(lh: float, la: float) -> float:
 def over25_probability(lambda_total: float) -> float:
     return 1 - (poisson_p(0, lambda_total) + poisson_p(1, lambda_total) + poisson_p(2, lambda_total))
 
+def over_under_probabilities(lambda_home: float, lambda_away: float, thresholds: List[float] = None) -> dict:
+    """
+    Calculate Over/Under probabilities for multiple thresholds using Poisson distribution.
+    
+    Args:
+        lambda_home: Expected goals for home team (Poisson parameter)
+        lambda_away: Expected goals for away team (Poisson parameter)
+        thresholds: List of goal thresholds (default: [0.5, 1.5, 2.5, 3.5])
+    
+    Returns:
+        Dictionary with threshold as key and dict of {over, under, balanced} probabilities
+    """
+    if thresholds is None:
+        thresholds = [0.5, 1.5, 2.5, 3.5]
+    
+    results = {}
+    
+    for threshold in thresholds:
+        # Calculate probability for each total goals scenario
+        # Since we need total_goals > threshold for Over, we sum P(home=h, away=a) for all h+a > threshold
+        over_prob = 0.0
+        
+        # Calculate up to reasonable upper bound (3 sigma ~ mean + 3*sqrt(mean))
+        max_goals_home = int(lambda_home + 4 * math.sqrt(lambda_home) + 10)
+        max_goals_away = int(lambda_away + 4 * math.sqrt(lambda_away) + 10)
+        
+        for h in range(max_goals_home + 1):
+            for a in range(max_goals_away + 1):
+                total = h + a
+                if total > threshold:
+                    prob_h = poisson_p(h, lambda_home)
+                    prob_a = poisson_p(a, lambda_away)
+                    over_prob += prob_h * prob_a
+        
+        under_prob = 1.0 - over_prob
+        
+        # Balanced: which one has higher probability
+        balanced = "over" if over_prob > under_prob else "under"
+        
+        results[str(threshold)] = {
+            "over": over_prob,
+            "under": under_prob,
+            "balanced": balanced,
+            "probabilities": {
+                "over": over_prob,
+                "under": under_prob
+            }
+        }
+    
+    return results
+
+def btts_score_distribution(lambda_home: float, lambda_away: float) -> dict:
+    """
+    Calculate BTTS probability using score distribution method.
+    Sums P(home=h, away=a) for all combinations where both h > 0 and a > 0.
+    
+    Args:
+        lambda_home: Expected goals for home team (Poisson parameter)
+        lambda_away: Expected goals for away team (Poisson parameter)
+    
+    Returns:
+        Dictionary with btts_yes and btts_no probabilities
+    """
+    btts_yes_prob = 0.0
+    
+    # Calculate up to reasonable upper bound
+    max_goals_home = int(lambda_home + 4 * math.sqrt(lambda_home) + 10)
+    max_goals_away = int(lambda_away + 4 * math.sqrt(lambda_away) + 10)
+    
+    for h in range(1, max_goals_home + 1):  # Start from 1 (both teams must score)
+        for a in range(1, max_goals_away + 1):
+            prob_h = poisson_p(h, lambda_home)
+            prob_a = poisson_p(a, lambda_away)
+            btts_yes_prob += prob_h * prob_a
+    
+    btts_no_prob = 1.0 - btts_yes_prob
+    
+    return {
+        "btts_yes": btts_yes_prob,
+        "btts_no": btts_no_prob,
+        "balanced": "yes" if btts_yes_prob > btts_no_prob else "no"
+    }
+
 def safe_edge(prob: float, odds: float) -> float:
     if odds<=0 or prob<=0: return -1.0
     return prob*odds - 1
@@ -2570,6 +2653,10 @@ def build_fixture_context(root: Path, fixture_id: int):
                     injuries_affected.append(inj)
             except: pass
 
+    # Calculate new BTTS and Over/Under predictions
+    btts_prediction = btts_score_distribution(lambda_home, lambda_away)
+    over_under_prediction = over_under_probabilities(lambda_home, lambda_away, thresholds=[0.5, 1.5, 2.5, 3.5])
+    
     ctx=FixtureContext(
         fixture_id=fixture_id,
         league_id=league_id,
@@ -2597,7 +2684,9 @@ def build_fixture_context(root: Path, fixture_id: int):
         "market_prob_details": {  # (C) összegyűjtve
             "one_x_two": prob_details_1x2,
             "other_markets": market_prob_details
-        }
+        },
+        "btts": btts_prediction,
+        "over_under": over_under_prediction
     }
     return ctx, extra
 
@@ -2715,6 +2804,8 @@ def analyze_fixture(root: Path, fixture_id: int, enhanced_tools: dict|None=None)
         "market_edge": extra["market_edge"],
         "injuries_hit_top": extra["injuries_hit_top"],
         "market_prob_details": extra["market_prob_details"],  # (C)
+        "btts": extra["btts"],  # New BTTS predictions
+        "over_under": extra["over_under"],  # New Over/Under predictions
         "generated_at": datetime.now(timezone.utc).isoformat()
     }
     if enhanced_block:
