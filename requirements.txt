@@ -10,3 +10,6 @@ sqlalchemy>=2.0.0
 
 # Utilities
 python-dotenv>=1.0.0
+
+# Testing (dev)
+pytest>=7.4.0
