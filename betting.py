@@ -1416,6 +1416,112 @@ def parse_goals_avg(team_stats_json: dict) -> tuple[float,float,str]:
     form=team_stats_json.get("form") or ""
     return gf, ga, form
 
+def calculate_last_5_form(recent_fixtures: list[dict], team_id: int, use_venue: str = None) -> dict:
+    """
+    Calculate form statistics from recent finished fixtures.
+    
+    Args:
+        recent_fixtures: List of fixture objects from API
+        team_id: Team ID to calculate stats for
+        use_venue: Filter by venue - "home", "away", or None for all
+        
+    Returns:
+        dict with keys:
+            - form_string: W/D/L string (e.g., "WWDLW")
+            - goals_for: Total goals scored
+            - goals_against: Total goals conceded
+            - goals_per_match: Average goals scored per match
+            - goals_against_per_match: Average goals conceded per match
+            - matches_count: Number of matches analyzed
+    """
+    if not recent_fixtures:
+        logger.warning("No recent fixtures provided for team %d", team_id)
+        return {
+            "form_string": "",
+            "goals_for": 0,
+            "goals_against": 0,
+            "goals_per_match": 1.0,
+            "goals_against_per_match": 1.0,
+            "matches_count": 0
+        }
+    
+    form_chars = []
+    total_gf = 0
+    total_ga = 0
+    matches_analyzed = 0
+    
+    for fx in recent_fixtures[:10]:  # Limit to 10 most recent
+        teams = fx.get("teams", {})
+        home_team = teams.get("home", {})
+        away_team = teams.get("away", {})
+        goals = fx.get("goals", {})
+        fixture_info = fx.get("fixture", {})
+        
+        # Determine if team is home or away
+        is_home = home_team.get("id") == team_id
+        is_away = away_team.get("id") == team_id
+        
+        if not (is_home or is_away):
+            continue
+        
+        # Apply venue filter if specified
+        if use_venue == "home" and not is_home:
+            continue
+        if use_venue == "away" and not is_away:
+            continue
+        
+        try:
+            home_goals = int(goals.get("home", 0))
+            away_goals = int(goals.get("away", 0))
+        except (TypeError, ValueError):
+            continue
+        
+        if is_home:
+            gf = home_goals
+            ga = away_goals
+        else:
+            gf = away_goals
+            ga = home_goals
+        
+        total_gf += gf
+        total_ga += ga
+        matches_analyzed += 1
+        
+        # Determine result
+        if gf > ga:
+            form_chars.append("W")
+        elif gf < ga:
+            form_chars.append("L")
+        else:
+            form_chars.append("D")
+    
+    if matches_analyzed == 0:
+        logger.warning("No valid matches found for team %d (venue filter: %s)", team_id, use_venue)
+        return {
+            "form_string": "",
+            "goals_for": 0,
+            "goals_against": 0,
+            "goals_per_match": 1.0,
+            "goals_against_per_match": 1.0,
+            "matches_count": 0
+        }
+    
+    form_string = "".join(form_chars[:5])  # Last 5 matches
+    gpm = total_gf / matches_analyzed
+    gapm = total_ga / matches_analyzed
+    
+    logger.debug("Team %d form calculated: %s (%.2f gf, %.2f ga over %d matches)", 
+                 team_id, form_string, gpm, gapm, matches_analyzed)
+    
+    return {
+        "form_string": form_string,
+        "goals_for": total_gf,
+        "goals_against": total_ga,
+        "goals_per_match": gpm,
+        "goals_against_per_match": gapm,
+        "matches_count": matches_analyzed
+    }
+
 def collect_squad_player_ids(squad_json: dict) -> set[int]:
     if not squad_json: return set()
     resp=squad_json.get("response") or []
@@ -1835,6 +1941,7 @@ class APIFootballClient:
         self._session: aiohttp.ClientSession|None=None
         self._sem=asyncio.Semaphore(PARALLEL_CONNECTIONS)
         self.last_rate_headers={}
+        self._recent_fixtures_cache={}  # Cache for team recent fixtures
     async def __aenter__(self):
         timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
         self._session=aiohttp.ClientSession(timeout=timeout, raise_for_status=False)
@@ -1867,6 +1974,40 @@ class APIFootballClient:
                 except (aiohttp.ClientError, asyncio.TimeoutError):
                     await asyncio.sleep(1+attempt)
             return {"errors":["network_fail"],"response":[]}
+    
+    async def get_team_recent_fixtures(self, team_id: int, last: int = 10) -> list[dict]:
+        """
+        Fetch recent finished fixtures for a team using /fixtures endpoint.
+        Results are cached to reduce API calls.
+        
+        Args:
+            team_id: Team ID
+            last: Number of recent fixtures to fetch (default: 10)
+            
+        Returns:
+            List of finished fixture objects
+        """
+        cache_key = f"{team_id}_{last}"
+        if cache_key in self._recent_fixtures_cache:
+            return self._recent_fixtures_cache[cache_key]
+        
+        try:
+            js = await self.get("/fixtures", {"team": team_id, "last": last})
+            fixtures = js.get("response", [])
+            
+            # Filter only finished matches
+            finished = []
+            for fx in fixtures:
+                status = fx.get("fixture", {}).get("status", {}).get("short", "")
+                if status == "FT":  # Full Time - finished matches
+                    finished.append(fx)
+            
+            self._recent_fixtures_cache[cache_key] = finished
+            logger.debug("Fetched %d recent finished fixtures for team %d", len(finished), team_id)
+            return finished
+        except Exception as e:
+            logger.warning("Failed to fetch recent fixtures for team %d: %s", team_id, e)
+            return []
 
 # =========================================================
 # OddsAPI kliens - Liga adatok lekérésére
@@ -2299,7 +2440,7 @@ def relative_value(raw_edge: float, odds: float)->float:
 # =========================================================
 # build_fixture_context – Tippmix odds override + fallback logika + (C) bővítések
 # =========================================================
-def build_fixture_context(root: Path, fixture_id: int):
+async def build_fixture_context(root: Path, fixture_id: int, client: APIFootballClient = None):
     summary_path=root / f"out_fixture_{fixture_id}" / "summary.json"
     summary=load_json(summary_path)
     if not summary:
@@ -2333,6 +2474,39 @@ def build_fixture_context(root: Path, fixture_id: int):
         js=load_json(ts_away_files[0]); team_stats_away=js.get("response") if js else None
     gf_home,ga_home,form_home=parse_goals_avg(team_stats_home) if team_stats_home else (1.1,1.2,"")
     gf_away,ga_away,form_away=parse_goals_avg(team_stats_away) if team_stats_away else (1.0,1.1,"")
+    
+    # Fetch recent fixtures for real form calculation if client is provided
+    home_recent_stats = None
+    away_recent_stats = None
+    home_recent_fixtures = []
+    away_recent_fixtures = []
+    
+    if client and home_id and away_id:
+        try:
+            home_recent_fixtures = await client.get_team_recent_fixtures(home_id, last=10)
+            away_recent_fixtures = await client.get_team_recent_fixtures(away_id, last=10)
+            
+            # Calculate form from recent fixtures
+            home_recent_stats = calculate_last_5_form(home_recent_fixtures, home_id, use_venue="home")
+            away_recent_stats = calculate_last_5_form(away_recent_fixtures, away_id, use_venue="away")
+            
+            # Use real form data if available
+            if home_recent_stats and home_recent_stats["matches_count"] > 0:
+                form_home = home_recent_stats["form_string"]
+                gf_home = home_recent_stats["goals_per_match"]
+                ga_home = home_recent_stats["goals_against_per_match"]
+                logger.debug("Using recent fixtures for home team %d: form=%s, gf=%.2f, ga=%.2f", 
+                            home_id, form_home, gf_home, ga_home)
+            
+            if away_recent_stats and away_recent_stats["matches_count"] > 0:
+                form_away = away_recent_stats["form_string"]
+                gf_away = away_recent_stats["goals_per_match"]
+                ga_away = away_recent_stats["goals_against_per_match"]
+                logger.debug("Using recent fixtures for away team %d: form=%s, gf=%.2f, ga=%.2f", 
+                            away_id, form_away, gf_away, ga_away)
+        except Exception as e:
+            logger.warning("Failed to fetch recent fixtures for teams %d vs %d: %s", home_id, away_id, e)
+    
     topscorers_files=find_raw_file(summary_path.parent,"topscorers_primary")
     topscorers_json=load_json(topscorers_files[0]) if topscorers_files else None
     top_home_ids=collect_top_scorers_ids(topscorers_json, home_id)
@@ -2349,8 +2523,10 @@ def build_fixture_context(root: Path, fixture_id: int):
     rating_away=compute_team_rating(inp_away)
     p_home,p_draw,p_away=logistic_probabilities(rating_home.combined_rating, rating_away.combined_rating)
     model_probs={"home":p_home,"draw":p_draw,"away":p_away}
-    lambda_home=max(0.05,(gf_home + ga_away)/2)
-    lambda_away=max(0.05,(gf_away + ga_home)/2)
+    
+    # Calculate lambda with home advantage
+    lambda_home=max(0.05, gf_home * (1 + HOME_ADV))
+    lambda_away=max(0.05, gf_away)
     lambda_total=lambda_home + lambda_away
     odds_1x2=None
     odds_btts=None
@@ -2597,7 +2773,9 @@ def build_fixture_context(root: Path, fixture_id: int):
         "market_prob_details": {  # (C) összegyűjtve
             "one_x_two": prob_details_1x2,
             "other_markets": market_prob_details
-        }
+        },
+        "home_recent": home_recent_stats,
+        "away_recent": away_recent_stats
     }
     return ctx, extra
 
@@ -2648,8 +2826,8 @@ def gather_bayes_history(root: Path, days: int)->List[dict]:
 # =========================================================
 # Elemzés
 # =========================================================
-def analyze_fixture(root: Path, fixture_id: int, enhanced_tools: dict|None=None)->dict:
-    tup=build_fixture_context(root, fixture_id)
+async def analyze_fixture(root: Path, fixture_id: int, enhanced_tools: dict|None=None, client: APIFootballClient = None)->dict:
+    tup=await build_fixture_context(root, fixture_id, client)
     if not tup: return {}
     ctx,extra=tup
     enhanced_block={}
@@ -2715,6 +2893,8 @@ def analyze_fixture(root: Path, fixture_id: int, enhanced_tools: dict|None=None)
         "market_edge": extra["market_edge"],
         "injuries_hit_top": extra["injuries_hit_top"],
         "market_prob_details": extra["market_prob_details"],  # (C)
+        "home_recent": extra.get("home_recent"),
+        "away_recent": extra.get("away_recent"),
         "generated_at": datetime.now(timezone.utc).isoformat()
     }
     if enhanced_block:
@@ -4331,11 +4511,12 @@ async def run_pipeline(fetch: bool, analyze: bool,
                         await refetch_single_fixture(client, fid, DATA_ROOT)
         valid=[fid for fid in targets if (DATA_ROOT/f"out_fixture_{fid}"/"summary.json").exists()]
         logger.info("Elemzendő fixture: %d", len(valid))
-        for idx,fid in enumerate(valid,1):
-            res=analyze_fixture(DATA_ROOT, fid, enhanced_tools)
-            if res: analyzed_res.append(res)
-            if idx%100==0:
-                logger.info("Elemzés haladás: %d / %d", idx, len(valid))
+        async with APIFootballClient(API_KEY, API_BASE) as client:
+            for idx,fid in enumerate(valid,1):
+                res=await analyze_fixture(DATA_ROOT, fid, enhanced_tools, client)
+                if res: analyzed_res.append(res)
+                if idx%100==0:
+                    logger.info("Elemzés haladás: %d / %d", idx, len(valid))
         picks=allocate_stakes(analyzed_res)
         register_picks(picks)
         tickets=select_best_tickets(analyzed_res, only_today=TICKET_ONLY_TODAY)
