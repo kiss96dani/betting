@@ -12,6 +12,9 @@ from zoneinfo import ZoneInfo
 from aiohttp import ClientTimeout
 import concurrent.futures
 from PIL import ImageFilter
+from collections import deque
+import pandas as pd
+from ml_model import train_model, predict_match, save_model, load_model
 
 # ================= LOGGING =================
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -21,6 +24,15 @@ logging.basicConfig(
     datefmt="%Y-%m-%dT%H:%M:%S"
 )
 logger = logging.getLogger("betting")
+
+# Enhanced feature engineering (after logger is defined)
+try:
+    from feature_engineering import AdvancedFeatureEngineer, extract_enhanced_features, create_feature_pipeline, AdvancedFeatures
+    HAVE_FEATURE_ENGINEERING = True
+    logger.info("Advanced feature engineering module loaded successfully")
+except ImportError:
+    HAVE_FEATURE_ENGINEERING = False
+    logger.warning("Feature engineering module not available")
 
 # ============= API-FOOTBALL CONF =================
 API_HOST = "v3.football.api-sports.io"
@@ -109,6 +121,11 @@ EXTRA_NT_MAJOR_IDS = {int(x) for x in os.getenv("EXTRA_NT_MAJOR_IDS","").split("
 PUBLISH_MIN_EDGE_TOP = float(os.getenv("PUBLISH_MIN_EDGE_TOP", "0.05"))
 PUBLISH_MIN_EDGE_OTHER = float(os.getenv("PUBLISH_MIN_EDGE_OTHER", "0.08"))
 
+# (ÚJ) — ENV bővítés a többi általános env közelében
+API_RPM_LIMIT = int(os.getenv("API_RPM_LIMIT", "450"))        # percekénti kvóta (API csomagodtól függ)
+API_MAX_RPS = float(os.getenv("API_MAX_RPS", "7.5"))            # max kérés/másodperc cél
+API_RATE_SAFETY = float(os.getenv("API_RATE_SAFETY", "0.95")) # biztonsági faktor (95% terhelés)
+
 # ============ Új betting funkciók environment változók ============
 # Value betting minimum edge threshold
 MIN_EDGE_THRESHOLD = float(os.getenv("MIN_EDGE_THRESHOLD", "0.03"))  # 3%
@@ -147,6 +164,30 @@ BAYES_MIN_TEAM_MATCHES = int(os.getenv("BAYES_MIN_TEAM_MATCHES", "15"))
 BAYES_LAMBDA_MIN = float(os.getenv("BAYES_LAMBDA_MIN", "0.2"))
 BAYES_LAMBDA_MAX = float(os.getenv("BAYES_LAMBDA_MAX", "3.5"))
 BAYES_MAX_SECONDS = int(os.getenv("BAYES_MAX_SECONDS", "25"))  # sampling time limit
+
+# ============ Enhanced Feature Engineering Configuration ============
+ENABLE_FEATURE_ENGINEERING = os.getenv("ENABLE_FEATURE_ENGINEERING", "1") == "1"
+FEATURE_SCALING_METHOD = os.getenv("FEATURE_SCALING_METHOD", "standard")  # standard, minmax
+FEATURE_SELECTION_ENABLED = os.getenv("FEATURE_SELECTION_ENABLED", "1") == "1"
+FEATURE_PCA_COMPONENTS = int(os.getenv("FEATURE_PCA_COMPONENTS", "10"))
+FEATURE_CLUSTERING_ENABLED = os.getenv("FEATURE_CLUSTERING_ENABLED", "1") == "1" 
+FEATURE_CLUSTER_COUNT = int(os.getenv("FEATURE_CLUSTER_COUNT", "5"))
+
+# Advanced analytics endpoints
+FETCH_EXTENDED_STATS = os.getenv("FETCH_EXTENDED_STATS", "1") == "1"
+FETCH_TRANSFER_DATA = os.getenv("FETCH_TRANSFER_DATA", "0") == "1"  # More expensive calls
+FETCH_INJURY_DETAILS = os.getenv("FETCH_INJURY_DETAILS", "1") == "1"
+FETCH_COACH_INFO = os.getenv("FETCH_COACH_INFO", "0") == "1"
+
+# Feature engineering weights and thresholds
+FORM_DECAY_FACTOR = float(os.getenv("FORM_DECAY_FACTOR", "0.9"))  # Exponential decay for form
+MOMENTUM_WINDOW = int(os.getenv("MOMENTUM_WINDOW", "5"))  # Last N matches for momentum
+H2H_RELEVANCE_YEARS = int(os.getenv("H2H_RELEVANCE_YEARS", "3"))  # H2H data relevance
+ELO_K_FACTOR = float(os.getenv("ELO_K_FACTOR", "20"))  # ELO rating adjustment factor
+
+# Market analysis enhancement
+MARKET_EFFICIENCY_THRESHOLD = float(os.getenv("MARKET_EFFICIENCY_THRESHOLD", "0.95"))
+MIN_BOOKMAKER_COUNT = int(os.getenv("MIN_BOOKMAKER_COUNT", "3"))  # Minimum bookmakers for consensus
 
 # ============ Opcionális csomagok ============
 try:
@@ -339,6 +380,36 @@ def _hex_to_rgb(h: str) -> tuple[int, int, int]:
     h = h.lstrip("#")
     return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
 
+def normalize_odds_keys(odds: dict) -> dict:
+    """
+    Odds dictionary normalization for various key naming conventions.
+    Converts keys to 'home', 'draw', 'away', 'yes', 'no', 'over25', 'under25'.
+    """
+    if not odds or not isinstance(odds, dict):
+        return {}
+    normalized = {}
+    for k, v in odds.items():
+        kl = k.lower()
+        try:
+            fv = float(v)
+        except Exception:
+            continue
+        if "home" in kl or "hazai" in kl or kl == "1":
+            normalized["home"] = fv
+        elif "draw" in kl or "döntetlen" in kl or kl == "x":
+            normalized["draw"] = fv
+        elif "away" in kl or "vendég" in kl or kl == "2":
+            normalized["away"] = fv
+        elif kl == "yes":
+            normalized["yes"] = fv
+        elif kl == "no":
+            normalized["no"] = fv
+        elif "over25" in kl or "over" in kl:
+            normalized["over25"] = fv
+        elif "under25" in kl or "under" in kl:
+            normalized["under25"] = fv
+    return normalized
+
 def _try_load_font(candidates: list[tuple[str,int]], fallback_size: int=28):
     # Próbálkozik rendszerfontokkal; ha nincs, PIL default
     if not HAVE_PIL:
@@ -374,6 +445,197 @@ def _draw_chip(draw, x_left: int, y_top: int, text: str, bg_rgb: tuple[int,int,i
         draw.text((int(cx - tw/2), int(cy - th/2)), text, fill=_hex_to_rgb("#0B1220"), font=font)
     return w
 
+def draw_vertical_result_badge(draw, rect, status, score, font, font_score=None, band_x_ratio=0.62, band_width=110, min_font_size=24, max_font_size=38):
+    """
+    Függőleges badge: dinamikus betűméret, hogy minden státusz elférjen.
+    """
+    from PIL import Image, ImageFont
+
+    color_map = {
+        "NYERTES": (34, 197, 94),
+        "VESZTES": (239, 68, 68),
+        "ELHALASZTVA": (59, 130, 246),
+    }
+    bg_rgb = color_map.get(status.upper(), (94, 94, 94))
+    (x1, y1), (x2, y2) = rect
+    card_w = x2 - x1
+    card_h = y2 - y1
+
+    # Badge helye és mérete
+    band_x = x1 + int(card_w * band_x_ratio)
+    band_w = band_width
+    badge_rect = [band_x, y1, band_x + band_w, y2]
+
+    # Sima téglalap
+    draw.rectangle([(badge_rect[0], badge_rect[1]), (badge_rect[2], badge_rect[3])], fill=bg_rgb)
+
+    # Szövegkép
+    txt_img_w = band_w
+    txt_img_h = card_h
+    txt_img = Image.new("RGBA", (int(txt_img_w), int(txt_img_h)), (0, 0, 0, 0))
+    txt_draw = ImageDraw.Draw(txt_img)
+
+    # Dinamikus betűméret: badge magasság / (karakterszám + 1) * scaling
+    status_chars = list(str(status))
+    n = len(status_chars)
+    ideal_font_size = int(card_h / (n + 1) * 0.95)
+    font_size = max(min_font_size, min(max_font_size, ideal_font_size))
+
+    # Új font a kívánt mérettel (típus: ugyanaz mint az eredeti font)
+    try:
+        font_path = font.path  # ha a font objektumnak van "path" attribútuma
+    except AttributeError:
+        font_path = "C:/Windows/Fonts/segoeuib.ttf"  # vagy más elérhető font
+    font_dyn = ImageFont.truetype(font_path, font_size)
+
+    center_x = int(txt_img_w // 2)
+    base_y = int(txt_img_h // 2 - (n * font_size // 2))
+    for i, ch in enumerate(status_chars):
+        txt_draw.text((center_x, base_y + i * font_size), ch, fill=(255,255,255), font=font_dyn, anchor="mm")
+    # Eredmény (score) alatta, kisebb fonttal
+    score_font = font_score or font_dyn
+    if score:
+        txt_draw.text((center_x, base_y + n * font_size + 12), score, fill=(255,255,255), font=score_font, anchor="mm")
+
+    # Paste
+    draw.im.paste(txt_img, (int(band_x), int(y1)), txt_img)
+
+# ===== Eredmény-kiértékelő segédek (ÚJ) =====
+
+STATUS_COMPLETED = {"FT", "AET", "PEN"}
+STATUS_POSTPONED = {"PST", "CANC", "SUSP", "ABD", "AWD", "WO", "INT", "TBD"}
+SCORE_DASH = "–"  # en dash
+
+def _sum_goals_90_et(score_block: dict) -> tuple[int, int]:
+    """
+    A teljes (90' + hosszabbítás) gólok összegzése. A büntetőpárbaj NEM számít bele.
+    """
+    if not isinstance(score_block, dict):
+        return 0, 0
+    ft = score_block.get("fulltime") or {}
+    et = score_block.get("extratime") or {}
+    try:
+        gh = int(ft.get("home") if ft.get("home") is not None else 0) + int(et.get("home") if et.get("home") is not None else 0)
+        ga = int(ft.get("away") if ft.get("away") is not None else 0) + int(et.get("away") if et.get("away") is not None else 0)
+    except Exception:
+        gh, ga = 0, 0
+    return gh, ga
+
+def get_fixture_status_and_score(fixture_id: int) -> dict:
+    """
+    Visszaadja a rövid státuszt és a 90'+ET gólokat a primary_fixture.json-ból.
+    return:
+      {
+        "status_short": str,
+        "home_goals_120": int,
+        "away_goals_120": int,
+        "home_pen": Optional[int],
+        "away_pen": Optional[int],
+        "home_winner_flag": Optional[bool],
+        "away_winner_flag": Optional[bool],
+        "label": str
+      }
+    """
+    pf = DATA_ROOT / f"out_fixture_{fixture_id}" / "primary_fixture.json"
+    if not pf.exists():
+        return {"status_short": "UNK", "home_goals_120": 0, "away_goals_120": 0, "label": "ISMERETLEN"}
+    try:
+        js = json.loads(pf.read_text(encoding="utf-8"))
+    except Exception:
+        return {"status_short": "UNK", "home_goals_120": 0, "away_goals_120": 0, "label": "ISMERETLEN"}
+
+    fixture = js.get("fixture", {}) or {}
+    teams = js.get("teams", {}) or {}
+    status_short = (fixture.get("status") or {}).get("short") or "UNK"
+    score_block = js.get("score", {}) or {}
+    gh, ga = _sum_goals_90_et(score_block)
+
+    pen = score_block.get("penalty") or {}
+    ph = pen.get("home")
+    pa = pen.get("away")
+    h_w = (teams.get("home") or {}).get("winner")
+    a_w = (teams.get("away") or {}).get("winner")
+
+    label = {
+        "FT": "LEFÚJVA",
+        "AET": "HOSSZABBÍTÁS",
+        "PEN": "BÜNTETŐK",
+        "PST": "ELHALASZTVA",
+        "CANC": "ELMARADT",
+        "SUSP": "MEGSZAKÍTVA"
+    }.get(status_short, status_short)
+
+    return {
+        "status_short": status_short,
+        "home_goals_120": gh,
+        "away_goals_120": ga,
+        "home_pen": ph,
+        "away_pen": pa,
+        "home_winner_flag": h_w,
+        "away_winner_flag": a_w,
+        "label": label
+    }
+
+def evaluate_selection_result(market: str, selection: str, primary_info: dict) -> str:
+    """
+    Piaconkénti eredmény eldöntése.
+    return: "WIN" | "LOSS" | "POSTPONED"
+    """
+    status = (primary_info or {}).get("status_short") or "UNK"
+    gh = int((primary_info or {}).get("home_goals_120") or 0)
+    ga = int((primary_info or {}).get("away_goals_120") or 0)
+
+    # Nem lezárt meccs → POSTPONED
+    if status not in STATUS_COMPLETED and status not in STATUS_POSTPONED:
+        return "POSTPONED"
+    if status in STATUS_POSTPONED:
+        return "POSTPONED"
+
+    sel = (selection or "").strip().upper()
+    mkt = (market or "").strip().upper()
+
+    if mkt == "1X2":
+        # Döntés: ha rendelkezésre áll a winner flag (PEN/AET eset), használjuk
+        h_w = primary_info.get("home_winner_flag")
+        a_w = primary_info.get("away_winner_flag")
+        if status in {"AET", "PEN"} and (h_w is not None or a_w is not None):
+            if sel == "HOME" and h_w is True:
+                return "WIN"
+            if sel == "AWAY" and a_w is True:
+                return "WIN"
+            if sel == "DRAW":
+                return "LOSS"
+            return "LOSS"
+        # Egyébként 120 perc góljai döntenek
+        if gh > ga:
+            return "WIN" if sel == "HOME" else "LOSS"
+        if ga > gh:
+            return "WIN" if sel == "AWAY" else "LOSS"
+        # Egyenlő: csak FT-nél értelme a DRAW nyerésnek
+        if status == "FT" and gh == ga:
+            return "WIN" if sel == "DRAW" else "LOSS"
+        # Hosszabbítás után döntetlen nincs (ha nincs winner flag, tekintsük vesztesnek)
+        return "LOSS"
+
+    if mkt == "BTTS":
+        both = (gh >= 1 and ga >= 1)
+        if sel == "YES":
+            return "WIN" if both else "LOSS"
+        if sel == "NO":
+            return "WIN" if not both else "LOSS"
+        return "LOSS"
+
+    # O/U 2.5 – az összgól a 90+ET alapján
+    if mkt.startswith("O/U"):
+        total = gh + ga
+        if "UNDER" in sel:
+            return "WIN" if total <= 2 else "LOSS"
+        if "OVER" in sel:
+            return "WIN" if total >= 3 else "LOSS"
+        return "LOSS"
+
+    return "LOSS"
+
 # ===== (MÓDOSÍTÁS) generate_ticket_card – textsize → _textsize, rounded_rectangle → _rounded_rectangle =====
 def generate_ticket_card(
     tickets: dict,
@@ -387,14 +649,13 @@ def generate_ticket_card(
     watermark_mode: str = "global",  # "global" | "per-card" | "none"
     watermark_opacity: float = 0.10, # 0.0–1.0
     watermark_scale: float = 1.12,   # global-diagonal: a vászon átlójának aránya
-    watermark_angle: float | None = 45.0  # None => sarokba, szám => ennyi fokkal, középre igazítva
+    watermark_angle: float | None = 45.0,  # None => sarokba, szám => ennyi fokkal
+    results_by_fixture: dict | None = None # [ÚJ] "fixture_id:market" -> {"status","score","label"}
 ) -> bytes:
     """
     PNG szelvénykép generálása dizájn opciókkal.
-    - watermark_mode:
-        - global: nagy vízjel az egész képen (ha watermark_angle meg van adva, középre téve és elforgatva)
-        - per-card: minden kártya jobb-alsó részébe kicsi vízjel
-        - none: nincs vízjel
+    Ha results_by_fixture meg van adva, a kártyákon megjelenik a vertikális NYERTES/VESZTES/ELHALASZTVA címke
+    és a végeredmény (pl. 0–2). A vesztes tippnél a Tipp: sor finoman elszürkül.
     """
     if not HAVE_PIL:
         raise RuntimeError("Pillow (PIL) nincs telepítve. Telepítés: pip install Pillow")
@@ -453,7 +714,6 @@ def generate_ticket_card(
                                canvas_w: int, canvas_h: int, rel_scale: float, opacity: float,
                                pad: int = 48, bottom_offset: int = 120, angle: float | None = None):
         if angle is None:
-            # Sarokba helyezett (régi viselkedés)
             target_w = max(48, int(canvas_w * max(0.12, min(0.6, rel_scale))))
             wm = _make_watermark_instance(logo_rgba, target_w, opacity)
             dest_x = canvas_w - pad - wm.width
@@ -462,7 +722,6 @@ def generate_ticket_card(
             dest_y = max(pad, dest_y)
             canvas.alpha_composite(wm, dest=(dest_x, dest_y))
         else:
-            # Középre igazított, elforgatott (pl. 45°) vízjel – a vászon átlójára méretezve
             diag = int(math.hypot(canvas_w, canvas_h))
             target_w = max(48, int(diag * max(0.5, min(1.6, rel_scale))))
             wm = _make_watermark_instance(logo_rgba, target_w, opacity)
@@ -479,10 +738,12 @@ def generate_ticket_card(
     # Színek
     clr_primary = _hex_to_rgb("#F8FAFC")
     clr_secondary = _hex_to_rgb("#CBD5E1")
+    clr_muted = _hex_to_rgb("#94A3B8")
     clr_card = _hex_to_rgb("#0B1220")
     clr_card_glass = _hex_to_rgb("#101a2f")
     clr_good = _hex_to_rgb("#22C55E")
     clr_bad = _hex_to_rgb("#EF4444")
+    clr_post = _hex_to_rgb("#3B82F6")
     rule_color = _hex_to_rgb("#1E293B")
     market_colors = {"1X2": _hex_to_rgb("#2563EB"), "BTTS": _hex_to_rgb("#10B981"), "O/U 2.5": _hex_to_rgb("#8B5CF6")}
 
@@ -500,14 +761,14 @@ def generate_ticket_card(
     font_badge = _try_load_font([("C:/Windows/Fonts/segoeuib.ttf", 28),
                                  ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 28)], 28)
 
-    # Fejléc (logó + cím középre igazítva a logóhoz)
+    # Fejléc (logó + cím)
     pad = 48
     y = pad
     x_left = pad
 
     logo_rgba = _load_logo_rgba(logo_path) if logo_path else None
 
-    # Bal felső logó (fejléc)
+    # Logó
     logo_w = logo_h = 0
     if logo_rgba is not None:
         w0, h0 = logo_rgba.size
@@ -517,7 +778,7 @@ def generate_ticket_card(
         header_logo = logo_rgba.resize((logo_w, logo_h), Image.LANCZOS)
         bg.alpha_composite(header_logo, dest=(x_left, y))
 
-    # Cím a logóhoz középre igazítva
+    # Cím
     title_x = x_left + (logo_w + 16 if logo_w else 0)
     t_w, t_h = _textsize(draw, title, font_title)
     logo_center_y = (y + logo_h // 2) if logo_h else (y + t_h // 2)
@@ -544,10 +805,10 @@ def generate_ticket_card(
     else:
         y = y_after_header + 42
 
-    # Kártya rajzoló (lényegi részek változatlanok)
+    # Kártya rajzoló
     def draw_block(y_top: int, market: str, league: str, home: str, away: str,
                    kickoff: str, tip: str, odds: float, model_pct: float, market_pct: float,
-                   edge: float, strength: float):
+                   edge: float, strength: float, fixture_id: int | None):
         card_h = 360
         rect = [(pad, y_top), (W - pad, y_top + card_h)]
         # háttér + árnyék
@@ -603,12 +864,32 @@ def generate_ticket_card(
         w_ko, _ = _textsize(draw, ko_line, font_small)
         draw.text((W - pad - 24 - w_ko, y_line + 4), ko_line, fill=clr_secondary, font=font_small)
 
-        # tipp + odds
+        # Tipp + odds
         y_line += 54
-        tip_line = f"Tipp: {tip} @ {odds}"
-        draw.text((x, y_line), tip_line, fill=clr_primary, font=font_text)
+        tip_color = clr_primary
+        status_label = None
+        status_color = None
+        score_text = None
+        if results_by_fixture and fixture_id:
+            key = f"{fixture_id}:{market}"
+            r = results_by_fixture.get(key)
+            if r:
+                lbl = r.get("label") or ""
+                st = (r.get("status") or "").upper()
+                score_text = r.get("score")
+                status_label = lbl
+                if st == "WIN":
+                    status_color = clr_good
+                elif st == "LOSS":
+                    status_color = clr_bad
+                    tip_color = clr_muted
+                elif st == "POSTPONED":
+                    status_color = clr_post
 
-        # badge közép
+        tip_line = f"Tipp: {tip} @ {odds}"
+        draw.text((x, y_line), tip_line, fill=tip_color, font=font_text)
+
+        # badge (edge)
         try:
             tip_bbox = draw.textbbox((x, y_line), tip_line, font=font_text)
             line_center_y = int((tip_bbox[1] + tip_bbox[3]) / 2)
@@ -625,7 +906,7 @@ def generate_ticket_card(
             text=badge_text,
             bg_rgb=edge_fill,
             font=font_badge,
-            center_plus=True  # <- ez igazítja középre a jelet
+            center_plus=True
         )
 
         # modell vs piac + bizalom
@@ -637,12 +918,22 @@ def generate_ticket_card(
         w_conf, _ = _textsize(draw, conf_line, font_small)
         draw.text((W - pad - 24 - w_conf, y_line), conf_line, fill=clr_secondary, font=font_small)
 
-        # per-card vízjel
-        if watermark_mode == "per-card" and logo_rgba is not None:
-            _draw_card_watermark(bg, rect, logo_rgba,
-                                 rel_scale=max(0.08, min(0.5, 0.20)),
-                                 opacity=max(0.03, min(0.25, watermark_opacity)),
-                                 margin=24)
+        # [ÚJ] Vertikális státusz + score
+        # Ferde eredmény sáv a kártya jobb oldalán
+        if status_label and status_color:
+            # Eredmény szín, szöveg
+            result_status = status_label.upper() # "NYERTES", "VESZTES", "ELHALASZTVA"
+            result_score = score_text or ""
+            # Kártya bounding box
+            card_rect = [(pad, y_top), (W - pad, y_top + card_h)]
+            # Fontok
+            font_result = font_market  # nagy, vastagabb
+            font_score = font_badge    # kisebb, ha van
+            # Rajzolás
+            # FONTOS: a draw_block függvényen belül van egy 'draw' objektum, de a paste miatt kell az eredeti bg Image is!
+            draw.im = bg  # draw objektumhoz hozzáadjuk az im-et, hogy paste-elni tudjon!
+            draw_vertical_result_badge(draw, card_rect, result_status, result_score, font_result, font_score)
+
         return y_top + card_h + 20
 
     # Piaconként első jelölt
@@ -680,8 +971,9 @@ def generate_ticket_card(
         market_p = float(e.get("market_prob", 0.0) or 0.0)
         edge = float(e.get("edge", 0.0) or 0.0)
         strength = float(e.get("market_strength", 0.0) or 0.0)
+        fid = e.get("fixture_id")
 
-        y = draw_block(y, market, league, str(home), str(away), str(kickoff), tip_hu, odds, model_p, market_p, edge, strength)
+        y = draw_block(y, market, league, str(home), str(away), str(kickoff), tip_hu, odds, model_p, market_p, edge, strength, fid)
 
     # Globál vízjel – sarok vagy átlós középre forgatott
     if watermark_mode == "global" and logo_rgba is not None:
@@ -691,10 +983,10 @@ def generate_ticket_card(
             opacity=max(0.03, min(0.25, watermark_opacity)),
             pad=pad,
             bottom_offset=120,
-            angle=watermark_angle  # 45 fok: átlós, középre helyezett
+            angle=watermark_angle
         )
 
-    # Lábléc: balra figyelmeztetés, jobbra handle
+    # Lábléc
     y_footer = H - 60
     left_footer = "A sportfogadás kockázattal jár. Játssz felelősséggel."
     right_footer = "@DK - Sports"
@@ -1829,44 +2121,193 @@ def hash_params(params: dict)->str:
 # API-Football HTTP kliens
 # =========================================================
 class APIFootballClient:
+    """
+    API-Football HTTP kliens – rate limit tudatosított verzió.
+
+    Újdonságok:
+    - Valós per-perc throttling (60 mp-es csúszó ablak, deque).
+    - X-RateLimit header alapján dinamikus limit beállítás.
+    - 429 / rateLimit hiba esetén alvás a reset-ig, majd retry.
+    - RPS target + random jitter (burst elkerülésére).
+    - Session re-open továbbra is megmarad.
+    """
+
     def __init__(self, api_key: str, base: str):
-        self.api_key=api_key
-        self.base=base.rstrip("/")
-        self._session: aiohttp.ClientSession|None=None
-        self._sem=asyncio.Semaphore(PARALLEL_CONNECTIONS)
-        self.last_rate_headers={}
+        self.api_key = api_key
+        self.base = base.rstrip("/")
+        self._session: aiohttp.ClientSession | None = None
+        self._sem = asyncio.Semaphore(PARALLEL_CONNECTIONS)
+        self.last_rate_headers = {}
+        # Rate limit tracking
+        self._rate_lock = asyncio.Lock()
+        self._req_times = deque()  # utolsó kérések időpontjai (epoch float, sec)
+        self._per_min_limit = max(1, int(API_RPM_LIMIT * API_RATE_SAFETY))
+        self._min_interval = 1.0 / max(0.1, API_MAX_RPS)  # cél: max RPS
+        self._last_req_ts = 0.0
+
     async def __aenter__(self):
-        timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
-        self._session=aiohttp.ClientSession(timeout=timeout, raise_for_status=False)
+        timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
+        self._session = aiohttp.ClientSession(timeout=timeout, raise_for_status=False)
         return self
+
     async def __aexit__(self, *exc):
-        if self._session: await self._session.close()
-    async def get(self, endpoint: str, params: dict)->dict:
-        url=self.base + endpoint
-        headers={"x-apisports-key": self.api_key, "Accept":"application/json"}
+        if self._session:
+            await self._session.close()
+
+    def _update_rate_from_headers(self):
+        # Ha érkezett limit header, frissítsük a per-perc limitet
+        try:
+            lim = int(self.last_rate_headers.get("x-ratelimit-requests-limit", "") or 0)
+            if lim > 0:
+                self._per_min_limit = max(1, int(lim * API_RATE_SAFETY))
+        except Exception:
+            pass
+
+    async def _throttle(self):
+        # Per-perc ablak + RPS korlátozás
+        async with self._rate_lock:
+            now = time.time()
+            # RPS: várj, ha túl gyors egymáshoz képest
+            delta = now - self._last_req_ts
+            if delta < self._min_interval:
+                await asyncio.sleep(self._min_interval - delta)
+                now = time.time()
+
+            # Csúszó ablak 60 mp
+            window = 60.0
+            while self._req_times and (now - self._req_times[0]) > window:
+                self._req_times.popleft()
+
+            # Ha elértük a limitet a 60 mp ablakban, várjunk a legrégebbi lejártáig
+            while len(self._req_times) >= self._per_min_limit:
+                wait_s = window - (now - self._req_times[0]) + 0.01
+                if wait_s > 0:
+                    await asyncio.sleep(wait_s)
+                now = time.time()
+                while self._req_times and (now - self._req_times[0]) > window:
+                    self._req_times.popleft()
+
+            # lefoglalás (előjegyzés) – a tényleges kérés előtt
+            self._req_times.append(now)
+            self._last_req_ts = now
+
+    async def get(self, endpoint: str, params: dict) -> dict:
+        url = self.base + endpoint
+        headers = {"x-apisports-key": self.api_key, "Accept": "application/json"}
+
         async with self._sem:
-            if self.last_rate_headers:
+            # Frissítjük a per-min limitet a legutóbbi header alapján
+            self._update_rate_from_headers()
+
+            # Fő hívási ciklus néhány retryn keresztül
+            for attempt in range(6):
                 try:
-                    remain=int(self.last_rate_headers.get("x-ratelimit-requests-remaining","5"))
-                    if remain<3: await asyncio.sleep(1.0)
-                except: pass
-            for attempt in range(3):
-                try:
+                    # Rate throttling
+                    await self._throttle()
+
+                    # Session biztosítás
+                    if self._session is None or self._session.closed:
+                        timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
+                        self._session = aiohttp.ClientSession(timeout=timeout, raise_for_status=False)
+
                     async with self._session.get(url, headers=headers, params=params) as resp:
-                        txt=await resp.text()
-                        try: js=json.loads(txt)
+                        txt = await resp.text()
+                        try:
+                            js = json.loads(txt)
                         except json.JSONDecodeError:
-                            js={"raw":txt,"parse_error":True}
-                        for k,v in resp.headers.items():
-                            lk=k.lower()
+                            js = {"raw": txt, "parse_error": True}
+
+                        # Rate header-ek tárolása
+                        for k, v in resp.headers.items():
+                            lk = k.lower()
                             if lk.startswith("x-ratelimit"):
-                                self.last_rate_headers[lk]=v
-                        if resp.status>=500:
-                            await asyncio.sleep(1+attempt); continue
+                                self.last_rate_headers[lk] = v
+
+                        status = resp.status
+
+                        # 429: túl sok kérés – alvás resetig ha tudjuk, különben exponenciális backoff
+                        if status == 429 or ("errors" in js and "rateLimit" in (js.get("errors") or {})):
+                            reset_raw = self.last_rate_headers.get("x-ratelimit-requests-reset")
+                            sleep_s = None
+                            try:
+                                # API-Football általában epoch vagy sec értéket ad
+                                val = float(reset_raw)
+                                # Ha "reset" timestamp jött (epoch), várunk odáig; ha sec count, azt használjuk
+                                if val > 1e9:
+                                    sleep_s = max(0.0, val - time.time()) + 0.25
+                                else:
+                                    sleep_s = max(0.0, val) + 0.25
+                            except Exception:
+                                # Fallback: exponenciális; attempt=0.. → 1.5, 3, 6, 9, ...
+                                sleep_s = 1.5 * (attempt + 1)
+                            await asyncio.sleep(sleep_s)
+                            continue  # retry
+
+                        # 5xx: szerver oldali hiba – rövid backoff
+                        if status >= 500:
+                            await asyncio.sleep(1 + attempt * 0.5)
+                            continue
+
+                        # Siker: kis jitter, vissza
+                        # (Jitter segít a burst-ek kisimításában)
+                        await asyncio.sleep(random.uniform(0.01, 0.05))
                         return js
-                except (aiohttp.ClientError, asyncio.TimeoutError):
-                    await asyncio.sleep(1+attempt)
-            return {"errors":["network_fail"],"response":[]}
+
+                except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError):
+                    await asyncio.sleep(1 + attempt * 0.5)
+
+            # Ha minden próbálkozás kudarc
+            return {"errors": ["network_or_ratelimit_fail"], "response": []}
+    
+    async def get_with_cache(self, endpoint: str, params: dict, cache_key: str = None) -> dict:
+        """Enhanced get method with caching capabilities"""
+        # Simple in-memory cache for this session
+        if not hasattr(self, '_cache'):
+            self._cache = {}
+        
+        cache_key = cache_key or f"{endpoint}_{hash(str(sorted(params.items())))}"
+        
+        if cache_key in self._cache:
+            logger.debug(f"Cache hit for {endpoint}")
+            return self._cache[cache_key]
+        
+        result = await self.get(endpoint, params)
+        self._cache[cache_key] = result
+        return result
+    
+    async def get_batch(self, requests: List[Tuple[str, str, dict]]) -> List[dict]:
+        """Batch API requests with enhanced rate limiting"""
+        results = []
+        
+        for tag, endpoint, params in requests:
+            try:
+                result = await self.get(endpoint, params)
+                results.append({"tag": tag, "data": result, "success": True})
+                
+                # Enhanced rate limiting for batch requests
+                if self.last_rate_headers:
+                    try:
+                        remain = int(self.last_rate_headers.get("x-ratelimit-requests-remaining", "5"))
+                        if remain < 2:  # More conservative for batch
+                            await asyncio.sleep(2.0)
+                        elif remain < 5:
+                            await asyncio.sleep(0.5)
+                    except:
+                        await asyncio.sleep(0.3)  # Default delay
+                        
+            except Exception as e:
+                logger.warning(f"Batch request failed for {tag}: {e}")
+                results.append({"tag": tag, "data": {}, "success": False, "error": str(e)})
+                
+        return results
+    
+    def get_rate_limit_status(self) -> dict:
+        """Get current rate limit status"""
+        return {
+            "remaining": self.last_rate_headers.get("x-ratelimit-requests-remaining", "unknown"),
+            "limit": self.last_rate_headers.get("x-ratelimit-requests-limit", "unknown"),
+            "reset": self.last_rate_headers.get("x-ratelimit-requests-reset", "unknown")
+        }
 
 # =========================================================
 # OddsAPI kliens - Liga adatok lekérésére
@@ -2648,78 +3089,331 @@ def gather_bayes_history(root: Path, days: int)->List[dict]:
 # =========================================================
 # Elemzés
 # =========================================================
-def analyze_fixture(root: Path, fixture_id: int, enhanced_tools: dict|None=None)->dict:
-    tup=build_fixture_context(root, fixture_id)
-    if not tup: return {}
-    ctx,extra=tup
-    enhanced_block={}
-    if ENABLE_ENHANCED_MODELING and enhanced_tools:
-        base_probs=ctx.probs
-        cald={}
-        ensemble_source={"base": base_probs}
-        if ENABLE_CALIBRATION and enhanced_tools.get("calibrators"):
-            for k in ("home","draw","away"):
-                co=enhanced_tools["calibrators"].get(k)
-                if co: cald[k]=co.transform(base_probs[k])
-                else: cald[k]={"raw":base_probs[k],"cal":base_probs[k],"used":"raw"}
-            calibrated={k: cald[k]["cal"] for k in cald}
-            enhanced_block["calibration"]=cald
-            ensemble_source["cal"]=calibrated
-        else:
-            calibrated=None
-        bayes_probs=None
-        if ENABLE_BAYES and enhanced_tools.get("bayes_model"):
-            bm=enhanced_tools["bayes_model"]
-            blams=bm.posterior_lambda_means(ctx.home_team_id, ctx.away_team_id)
-            if blams:
-                lbh,lba=blams
-                mc_bayes=run_mc_1x2(lbh,lba, sims=int(MC_SIMS/2))
-                bayes_probs={k: mc_bayes[k] for k in ("home","draw","away")}
-                enhanced_block["bayes_lambdas"]={"home":lbh,"away":lba}
-                enhanced_block["bayes_mc_probs"]=bayes_probs
-                ensemble_source["bayes"]=bayes_probs
-        mc_probs=None
-        if ENABLE_MC:
-            mc_all=run_mc_1x2(extra["lambda_home"], extra["lambda_away"], sims=MC_SIMS)
-            mc_probs={k: mc_all[k] for k in ("home","draw","away")}
-            enhanced_block["mc_full"]=mc_all
-            ensemble_source["mc"]=mc_probs
-        final_probs=ensemble_probs(
-            base=ensemble_source.get("base"),
-            cal=ensemble_source.get("cal"),
-            bayes=ensemble_source.get("bayes"),
-            mc=ensemble_source.get("mc"))
-        enhanced_block["ensemble_probs"]=final_probs
-        enhanced_block["weights_used"]=ENSEMBLE_WEIGHTS
-    out_dir=root / f"out_fixture_{fixture_id}"
-    tier=LEAGUE_MANAGER.tier_of(ctx.league_id) if ctx.league_id else None
-    result={
-        "fixture_id": ctx.fixture_id,
-        "kickoff_utc": ctx.kickoff_utc.isoformat(),
-        "league_id": ctx.league_id,
-        "league_name": ctx.league_name,
+# ==== 3. JAVÍTOTT: analyze_fixture (H2H + meta) ====
+def add_targets_to_root(js):
+    status = js.get("status_short")
+    gh = js.get("goals_home")
+    ga = js.get("goals_away")
+    changed = False
+    if status == "FT" and gh is not None and ga is not None:
+        js["result_1x2"] = 1 if gh > ga else 0 if gh == ga else 2
+        js["result_btts"] = int(gh >= 1 and ga >= 1)
+        js["result_over25"] = int((gh + ga) >= 3)
+        changed = True
+    return changed
+
+def add_targets(match):
+    status = match.get("fixture", {}).get("status", {}).get("short")
+    goals = match.get("goals", {})
+    gh = goals.get("home")
+    ga = goals.get("away")
+    changed = False
+    if status == "FT" and gh is not None and ga is not None:
+        match["result_1x2"] = 1 if gh > ga else 0 if gh == ga else 2
+        match["result_btts"] = int(gh >= 1 and ga >= 1)
+        match["result_over25"] = int((gh + ga) >= 3)
+        changed = True
+    return changed
+
+def recursive_search(obj):
+    changed = False
+    if isinstance(obj, dict):
+        if "fixture" in obj and "goals" in obj and "teams" in obj:
+            changed |= add_targets(obj)
+        for v in obj.values():
+            changed |= recursive_search(v)
+    elif isinstance(obj, list):
+        for v in obj:
+            changed |= recursive_search(v)
+    return changed
+
+def patch_ft_targets(js):
+    changed = False
+    changed |= add_targets_to_root(js)
+    changed |= recursive_search(js)
+    return changed
+
+def analyze_fixture(root: Path, fixture_id: int, enhanced_tools: dict | None = None) -> dict:
+    """
+    Teljesen frissített analyze_fixture függvény, FT target patcheléssel mentés előtt!
+    Szöglet piacokkal bővítve: szöglet statisztika, odds, model_prob, edge advanced_features-ben!
+    """
+    out_dir = root / f"out_fixture_{fixture_id}"
+    result = {}
+
+    # Fő meta-adatok összegyűjtése
+    meta = fallback_meta_for_fixture(fixture_id, root)
+    pf_path = out_dir / "primary_fixture.json"
+    primary = load_json(pf_path)
+    summary = load_json(out_dir / "summary.json")
+    league_id = None
+    league_name = None
+    home_name = None
+    away_name = None
+    season = None
+
+    if primary:
+        fixture = primary.get("fixture", {}) or {}
+        league = primary.get("league", {}) or {}
+        teams = primary.get("teams", {}) or {}
+        league_id = league.get("id")
+        league_name = league.get("name")
+        season = league.get("season")
+        home_name = teams.get("home", {}).get("name")
+        away_name = teams.get("away", {}).get("name")
+    else:
+        league_id = meta.get("league_id")
+        league_name = meta.get("league_name")
+        home_name = meta.get("home_name")
+        away_name = meta.get("away_name")
+
+    # Minden RAW API-football JSON beemelése
+    raw_dir = out_dir / "raw"
+    raw_files = list(raw_dir.glob("*.json"))
+    raw_data = {}
+    for rf in raw_files:
+        try:
+            key = rf.name.replace(".json", "")
+            raw_data[key] = json.loads(rf.read_text(encoding="utf-8"))
+        except Exception:
+            raw_data[key] = None
+    result["raw_api_football"] = raw_data
+
+    # --- H2H adatok beemelése ---
+    h2h_results = []
+    h2h_raw = raw_data.get("h2h", {})
+    if h2h_raw:
+        h2h_matches = h2h_raw.get("response", []) if isinstance(h2h_raw, dict) else []
+        h2h_results = [{
+            "date": m.get("fixture", {}).get("date"),
+            "home": m.get("teams", {}).get("home", {}).get("name", "?"),
+            "away": m.get("teams", {}).get("away", "?"),
+            "score": f'{m.get("goals", {}).get("home", "?")}:{m.get("goals", {}).get("away", "?")}'
+        } for m in h2h_matches[:10]]
+
+    # --- Meta kitöltés ---
+    tier = LEAGUE_MANAGER.tier_of(league_id) if league_id else None
+
+    result.update({
+        "fixture_id": fixture_id,
+        "kickoff_utc": (primary.get("fixture", {}).get("date") if primary else None),
+        "league_id": league_id,
+        "league_name": league_name,
         "league_tier": tier,
-        "season": ctx.season,
-        "teams": {"home_id": ctx.home_team_id, "away_id": ctx.away_team_id},
-        "model_probs": ctx.probs,
-        "odds": ctx.odds,
-        "fair_odds_model": ctx.fair_odds,
-        "edge": ctx.edge,
-        "kelly": ctx.kelly,
-        "home_rating": asdict(ctx.ratings_home),
-        "away_rating": asdict(ctx.ratings_away),
-        "lambda_home": extra["lambda_home"],
-        "lambda_away": extra["lambda_away"],
-        "market_probs": extra["market_probs"],
-        "market_odds": extra["market_odds"],
-        "market_edge": extra["market_edge"],
-        "injuries_hit_top": extra["injuries_hit_top"],
-        "market_prob_details": extra["market_prob_details"],  # (C)
+        "season": season,
+        "home_name": home_name,
+        "away_name": away_name,
+        "h2h_results": h2h_results,
         "generated_at": datetime.now(timezone.utc).isoformat()
+    })
+
+    # --- Célváltozók (target) kiszámítása ---
+    goals_home = None
+    goals_away = None
+    status_short = None
+    if primary:
+        score = primary.get("score", {}) or {}
+        ft = score.get("fulltime", {}) or {}
+        goals_home = ft.get("home")
+        goals_away = ft.get("away")
+        status_short = (primary.get("fixture", {}).get("status", {}) or {}).get("short")
+
+    result_1x2 = None
+    if status_short == "FT" and goals_home is not None and goals_away is not None:
+        if goals_home > goals_away:
+            result_1x2 = 1
+        elif goals_home == goals_away:
+            result_1x2 = 0
+        else:
+            result_1x2 = 2
+    result_btts = None
+    if goals_home is not None and goals_away is not None:
+        result_btts = int(goals_home >= 1 and goals_away >= 1)
+    result_over25 = None
+    if goals_home is not None and goals_away is not None:
+        result_over25 = int((goals_home + goals_away) >= 3)
+    result.update({
+        "goals_home": goals_home,
+        "goals_away": goals_away,
+        "status_short": status_short,
+        "result_1x2": result_1x2,
+        "result_btts": result_btts,
+        "result_over25": result_over25,
+    })
+
+    # --- Feature Engineering: minden fontos adatból advanced_features generálása ---
+    advanced_features = {}
+
+    # Odds
+    odds_raw = raw_data.get("odds", {})
+    try:
+        odds_resp = odds_raw.get("response", [])
+        if odds_resp and isinstance(odds_resp, list):
+            for bm in odds_resp[0].get("bookmakers", []):
+                for bet in bm.get("bets", []):
+                    if bet.get("name", "").lower() in ["match winner", "1x2", "fulltime result"]:
+                        for v in bet.get("values", []):
+                            val = v.get("value", "").lower()
+                            if val.startswith("home"):
+                                advanced_features["odds_home"] = float(v.get("odd", 0))
+                            elif val.startswith("draw"):
+                                advanced_features["odds_draw"] = float(v.get("odd", 0))
+                            elif val.startswith("away"):
+                                advanced_features["odds_away"] = float(v.get("odd", 0))
+    except Exception:
+        pass
+
+    # Statisztikák
+    stats_raw = raw_data.get("statistics", {})
+    try:
+        stats_resp = stats_raw.get("response", [])
+        for team_stats in stats_resp:
+            team_side = team_stats.get("team", {}).get("name", "").lower()
+            for stat in team_stats.get("statistics", []):
+                k = stat.get("type", "")
+                v = stat.get("value", 0)
+                if team_side and k:
+                    advanced_features[f"{team_side}_{k.replace(' ', '_').lower()}"] = v
+    except Exception:
+        pass
+
+    # --- Szöglet statisztikák --- #
+    corners_home_avg = None
+    corners_away_avg = None
+    corners_total_avg = None
+    try:
+        stats_resp = stats_raw.get("response", [])
+        for team_stats in stats_resp:
+            team_side = team_stats.get("team", {}).get("name", "").lower()
+            for stat in team_stats.get("statistics", []):
+                if stat.get("type", "").lower() == "corners":
+                    v = stat.get("value", 0)
+                    if team_side == (home_name or "").lower():
+                        corners_home_avg = v
+                    elif team_side == (away_name or "").lower():
+                        corners_away_avg = v
+        if corners_home_avg is not None and corners_away_avg is not None:
+            corners_total_avg = corners_home_avg + corners_away_avg
+        advanced_features["corners_home_avg"] = corners_home_avg
+        advanced_features["corners_away_avg"] = corners_away_avg
+        advanced_features["corners_total_avg"] = corners_total_avg
+    except Exception:
+        pass
+
+    # Sérülések (injuries)
+    injuries_raw = raw_data.get("injuries_league", {})
+    try:
+        injuries_resp = injuries_raw.get("response", [])
+        advanced_features["injuries_count"] = len(injuries_resp)
+    except Exception:
+        advanced_features["injuries_count"] = 0
+
+    # Tabella (standings)
+    standings_raw = raw_data.get("standings", {})
+    try:
+        standings_resp = standings_raw.get("response", [])
+        if standings_resp and isinstance(standings_resp, list):
+            for group in standings_resp:
+                for team in group.get("standings", []):
+                    if team.get("team", {}).get("name") == home_name:
+                        advanced_features["home_standings_position"] = team.get("rank")
+                    if team.get("team", {}).get("name") == away_name:
+                        advanced_features["away_standings_position"] = team.get("rank")
+    except Exception:
+        pass
+
+    # Lineup, xG, egyéb advanced statok, stb.
+    lineups_raw = raw_data.get("lineups", {})
+    try:
+        lineups_resp = lineups_raw.get("response", [])
+        advanced_features["lineups_count"] = len(lineups_resp)
+    except Exception:
+        advanced_features["lineups_count"] = 0
+
+    # H2H statok
+    advanced_features["h2h_count"] = len(h2h_results)
+
+    # Model alap statok, ha van compute_team_rating vagy model_probs
+    try:
+        ctx, extra = build_fixture_context(root, fixture_id)
+        advanced_features["home_rating"] = ctx.ratings_home.combined_rating
+        advanced_features["away_rating"] = ctx.ratings_away.combined_rating
+        advanced_features["lambda_home"] = extra.get("lambda_home", 0)
+        advanced_features["lambda_away"] = extra.get("lambda_away", 0)
+        for k, v in ctx.probs.items():
+            advanced_features[f"model_prob_{k}"] = v
+        for k, v in ctx.edge.items():
+            advanced_features[f"model_edge_{k}"] = v
+        # ---- BTTS és O/U 2.5 piacok model_prob és model_edge ----
+        for k, v in extra.get("market_probs", {}).items():
+            advanced_features[f"model_prob_{k}"] = v
+        for k, v in extra.get("market_edge", {}).items():
+            advanced_features[f"model_edge_{k}"] = v
+    except Exception:
+        pass
+
+    # --- Szöglet piac model_prob és edge --- #
+    # Poisson: P(Over 9.5) és Under
+    if corners_total_avg is not None:
+        try:
+            lam = float(corners_total_avg)
+            prob_over95 = 1 - sum(poisson_p(k, lam) for k in range(0, 10))
+            prob_under95 = sum(poisson_p(k, lam) for k in range(0, 10))
+            advanced_features["model_prob_corners_over95"] = prob_over95
+            advanced_features["model_prob_corners_under95"] = prob_under95
+        except Exception:
+            pass
+
+    # --- Odds + edge szöglet piacra --- #
+    corners_over95_odds = None
+    corners_under95_odds = None
+    try:
+        odds_resp = odds_raw.get("response", [])
+        for bm in odds_resp:
+            for bookmaker in bm.get("bookmakers", []):
+                for bet in bookmaker.get("bets", []):
+                    name = bet.get("name", "").lower()
+                    if "corner" in name and ("over" in name or "under" in name):
+                        for v in bet.get("values", []):
+                            val = v.get("value", "").lower()
+                            if "over 9.5" in val:
+                                corners_over95_odds = float(v.get("odd", 0))
+                            elif "under 9.5" in val:
+                                corners_under95_odds = float(v.get("odd", 0))
+        if corners_over95_odds is not None:
+            advanced_features["corners_over95_odds"] = corners_over95_odds
+            if "model_prob_corners_over95" in advanced_features:
+                advanced_features["model_edge_corners_over95"] = advanced_features["model_prob_corners_over95"] * corners_over95_odds - 1
+        if corners_under95_odds is not None:
+            advanced_features["corners_under95_odds"] = corners_under95_odds
+            if "model_prob_corners_under95" in advanced_features:
+                advanced_features["model_edge_corners_under95"] = advanced_features["model_prob_corners_under95"] * corners_under95_odds - 1
+    except Exception:
+        pass
+
+    # --- Feature engineering blokk hozzáadása ---
+    result["feature_engineering"] = {
+        "advanced_features": advanced_features
     }
-    if enhanced_block:
-        result["enhanced_model"]=enhanced_block
-    safe_write_json(out_dir/"analysis.json", result)
+
+    # --- Enhanced modeling, ha van ilyen ---
+    if enhanced_tools:
+        serializable_enhanced = {}
+        for k, v in enhanced_tools.items():
+            if hasattr(v, "fitted"):
+                serializable_enhanced[k] = {"fitted": v.fitted}
+            else:
+                try:
+                    serializable_enhanced[k] = str(v)
+                except:
+                    serializable_enhanced[k] = None
+        result["enhanced_model"] = serializable_enhanced
+
+    # --- FT targetek patchelése minden szinten ---
+    patch_ft_targets(result)
+
+    # --- Végleges mentés ---
+    safe_write_json(out_dir / "analysis.json", result)
     return result
 
 # =========================================================
@@ -2731,7 +3425,7 @@ def allocate_stakes(analysis_results: list[dict])->list[dict]:
     picks=[]
     for r in analysis_results:
         # Az analysis["odds"] itt sima 1X2 dict: {"home":..,"draw":..,"away":..}
-        odds = r.get("odds")
+        odds = normalize_odds_keys(r.get("odds") or {})
         if not odds:
             continue
 
@@ -2854,6 +3548,71 @@ def register_picks(picks: list[dict]):
         RUNTIME_STATE["picks"].extend(picks)
         save_state()
 
+# ==== 1. ÚJ: fallback_meta_for_fixture ====
+def fallback_meta_for_fixture(fixture_id: int, root: Path = DATA_ROOT) -> dict:
+    """
+    Próbálja a lehető legtöbb meta-adatot (home/away/league/venue nevek) összegyűjteni egy fixture_id-hoz,
+    több lehetséges JSON forrásból. Ha nem talál, ?-t vagy ISMERETLEN-t ad vissza.
+    """
+    meta = {}
+    # Első: primary_fixture.json
+    pf = root / f"out_fixture_{fixture_id}" / "primary_fixture.json"
+    if pf.exists():
+        try:
+            js = json.loads(pf.read_text(encoding="utf-8"))
+            teams = js.get("teams", {})
+            league = js.get("league", {})
+            fixture = js.get("fixture", {})
+            venue = (fixture.get("venue", {}) or {})
+            meta = {
+                "home_name": teams.get("home", {}).get("name"),
+                "away_name": teams.get("away", {}).get("name"),
+                "league_name": league.get("name"),
+                "league_country": league.get("country"),
+                "venue_name": venue.get("name"),
+                "venue_city": venue.get("city")
+            }
+        except Exception:
+            pass
+    # Második: summary.json (ha van)
+    if not all(meta.get(k) for k in ("home_name", "away_name", "league_name")):
+        summ = root / f"out_fixture_{fixture_id}" / "summary.json"
+        if summ.exists():
+            try:
+                js = json.loads(summ.read_text(encoding="utf-8"))
+                meta.setdefault("home_name", js.get("home_name"))
+                meta.setdefault("away_name", js.get("away_name"))
+                meta.setdefault("league_name", js.get("league_name"))
+            except Exception:
+                pass
+    # Harmadik: odds.json (néha tartalmaz neveket)
+    if not all(meta.get(k) for k in ("home_name", "away_name", "league_name")):
+        odds_files = list((root / f"out_fixture_{fixture_id}" / "raw").glob("odds__*.json"))
+        for odds_file in odds_files:
+            try:
+                js = json.loads(odds_file.read_text(encoding="utf-8"))
+                resp = js.get("response") or []
+                if resp and isinstance(resp, list):
+                    for rec in resp:
+                        for bm in rec.get("bookmakers", []):
+                            for bet in bm.get("bets", []):
+                                for v in bet.get("values", []):
+                                    meta.setdefault("home_name", v.get("home_team"))
+                                    meta.setdefault("away_name", v.get("away_team"))
+                                    meta.setdefault("league_name", v.get("league_name"))
+            except Exception:
+                continue
+            if all(meta.get(k) for k in ("home_name", "away_name", "league_name")):
+                break
+    # Végső fallback: ? vagy ISMERETLEN
+    for k in ("home_name", "away_name"):
+        if not meta.get(k):
+            meta[k] = "?"
+    for k in ("league_name", "league_country", "venue_name", "venue_city"):
+        if not meta.get(k):
+            meta[k] = "ISMERETLEN"
+    return meta
+
 # =========================================================
 # Ticket / meta segédek (változatlan + margin info a rationale-ben)
 # =========================================================
@@ -2960,7 +3719,7 @@ def select_best_tickets_enhanced(analyzed_results: list[dict], only_today: bool=
                 "kickoff_local": format_local_time(r["kickoff_utc"])
             })
 
-    # BTTS (FIX: btts_yes / btts_no kulcsok használata)
+    # BTTS (btts_yes / btts_no kulcsokkal)
     for r in analyzed_results:
         if not allow_ticket_for_public(r,"BTTS"): continue
         ko=r.get("kickoff_utc")
@@ -3016,7 +3775,7 @@ def select_best_tickets_enhanced(analyzed_results: list[dict], only_today: bool=
                 "kickoff_local": format_local_time(r["kickoff_utc"])
             })
 
-    # O/U 2.5
+    # O/U 2.5 (over25 / under25 kulcsokkal)
     for r in analyzed_results:
         if not allow_ticket_for_public(r,"O/U 2.5"): continue
         ko=r.get("kickoff_utc")
@@ -3077,26 +3836,25 @@ def select_best_tickets_enhanced(analyzed_results: list[dict], only_today: bool=
     candidates_btts.sort(key=lambda x: x["value_score"], reverse=True)
     candidates_ou.sort(key=lambda x: x["value_score"], reverse=True)
 
-    # A select_best_tickets_enhanced függvényen belül CSERÉLD LE az _enrich_list-et erre:
-    def _enrich_list(lst: list[dict]) -> list[dict]:
+    # Enrich: meta nevek és kickoff_local pótlás
+    # ==== 2. JAVÍTOTT: _enrich_list ==== 
+    def _enrich_list(lst: list[dict], root: Path = DATA_ROOT) -> list[dict]:
+        """
+        Jegy listát meta-adatokkal robusztusan feltölt (név, liga, venue, city)
+        """
         enriched = []
         for e in lst:
             try:
                 fid = e.get("fixture_id")
                 if fid:
-                    meta = load_fixture_meta(fid)
-                    if meta:
-                        if not e.get("home_name"):
-                            e["home_name"] = meta.get("home_name")
-                        if not e.get("away_name"):
-                            e["away_name"] = meta.get("away_name")
-                        if not e.get("league_name"):
-                            e["league_name"] = meta.get("league_name")
-                # kickoff_local pótolása (ha nincs)
+                    meta = fallback_meta_for_fixture(fid, root)
+                    for key in ("home_name", "away_name", "league_name", "league_country", "venue_name", "venue_city"):
+                        if not e.get(key) or e.get(key) in (None, "?", "ISMERETLEN"):
+                            e[key] = meta.get(key, "?")
+                # kickoff_local pótolása
                 if not e.get("kickoff_local"):
                     e["kickoff_local"] = format_local_time(e.get("kickoff_utc",""))
             except Exception:
-                # meta hiánya esetén hagyjuk meg az eddigi értékeket
                 pass
             enriched.append(e)
         return enriched
@@ -3106,6 +3864,89 @@ def select_best_tickets_enhanced(analyzed_results: list[dict], only_today: bool=
         "btts": _enrich_list(candidates_btts[:max_tips_per_market] if candidates_btts else []),
         "overunder": _enrich_list(candidates_ou[:max_tips_per_market] if candidates_ou else [])
     }
+
+def select_best_raw_tickets(analyzed_results: list[dict], only_today: bool=True) -> dict:
+    """
+    Minden meccsre, minden piacra (1X2, BTTS, O/U 2.5) MINDIG ad ajánlást:
+    - a legmagasabb model_prob-ot választja ki minden piacon, odds nélkül is!
+    - ha odds nincs, azt None-nak adja vissza.
+    """
+    tz = ZoneInfo(LOCAL_TZ)
+    today_local = datetime.now(tz=tz).date()
+
+    def same_local_day(iso_utc: str) -> bool:
+        if not only_today: return True
+        try:
+            dt_utc = datetime.fromisoformat(iso_utc.replace("Z","+00:00"))
+            return dt_utc.astimezone(tz).date() == today_local
+        except: return False
+
+    tickets = {"x1x2": [], "btts": [], "overunder": []}
+    for r in analyzed_results:
+        ko = r.get("kickoff_utc")
+        if not ko: continue
+        if only_today and not same_local_day(ko): continue
+
+        print(f"ODDS RAW: {r.get('odds')}")
+        odds = normalize_odds_keys(r.get("odds") or {})
+        print(f"ODDS NORMALIZED: {odds}")
+
+        probs = r.get("model_probs") or {}
+        if probs:
+            best_sel = max(probs, key=probs.get)
+            best_odds = odds.get(best_sel) if odds else None
+            tickets["x1x2"].append({
+                "fixture_id": r.get("fixture_id"),
+                "market": "1X2",
+                "selection": best_sel.upper(),
+                "odds": best_odds,
+                "model_prob": probs.get(best_sel),
+                "home_name": r.get("home_name"),
+                "away_name": r.get("away_name"),
+                "league_name": r.get("league_name"),
+                "kickoff_utc": ko,
+                "kickoff_local": format_local_time(ko),
+            })
+
+        # ---- BTTS ----
+        mp = r.get("market_probs") or {}
+        mo = normalize_odds_keys(r.get("market_odds") or {})
+        if mp:
+            best_sel = max(["btts_yes","btts_no"], key=lambda k: mp.get(k,0))
+            best_odds = mo.get(best_sel) if mo else None
+            tickets["btts"].append({
+                "fixture_id": r.get("fixture_id"),
+                "market": "BTTS",
+                "selection": "YES" if best_sel=="btts_yes" else "NO",
+                "odds": best_odds,
+                "model_prob": mp.get(best_sel),
+                "home_name": r.get("home_name"),
+                "away_name": r.get("away_name"),
+                "league_name": r.get("league_name"),
+                "kickoff_utc": ko,
+                "kickoff_local": format_local_time(ko),
+            })
+
+        # ---- O/U 2.5 ----
+        mp = r.get("market_probs") or {}
+        mo = normalize_odds_keys(r.get("market_odds") or {})
+        if mp:
+            best_sel = max(["over25","under25"], key=lambda k: mp.get(k,0))
+            best_odds = mo.get(best_sel) if mo else None
+            label = "OVER 2.5" if best_sel=="over25" else "UNDER 2.5"
+            tickets["overunder"].append({
+                "fixture_id": r.get("fixture_id"),
+                "market": "O/U 2.5",
+                "selection": label,
+                "odds": best_odds,
+                "model_prob": mp.get(best_sel),
+                "home_name": r.get("home_name"),
+                "away_name": r.get("away_name"),
+                "league_name": r.get("league_name"),
+                "kickoff_utc": ko,
+                "kickoff_local": format_local_time(ko),
+            })
+    return tickets
 
 def select_auto_value_bets(analyzed_results: list[dict], only_today: bool=True) -> dict:
     """
@@ -3566,7 +4407,7 @@ def select_best_tickets(analyzed_results: list[dict], only_today: bool=True) -> 
 
     def enrich(entry,title):
         if not entry: return entry
-        meta=load_fixture_meta(entry["fixture_id"])
+        meta=fallback_meta_for_fixture(entry["fixture_id"])
         venue_name=(meta.get("venue_name") or "").strip()
         venue_city=(meta.get("venue_city") or "").strip()
         entry.update(meta)
@@ -3653,73 +4494,277 @@ async def refetch_single_fixture(client: APIFootballClient, fixture_id: int, roo
 # FETCH fixture bundle
 # =========================================================
 FIXTURE_ENDPOINTS = [
+    # Core fixture data
     ("fixture", "/fixtures", {"id": "<FIXTURE_ID>"}),
     ("predictions", "/predictions", {"fixture": "<FIXTURE_ID>"}),
     ("odds", "/odds", {"fixture": "<FIXTURE_ID>"}),
+    
+    # Head-to-head and form analysis  
     ("h2h", "/fixtures/headtohead", {"h2h": "<HOME_ID>-<AWAY_ID>", "last":"10"}),
+    ("h2h_extended", "/fixtures/headtohead", {"h2h": "<HOME_ID>-<AWAY_ID>", "last":"20"}),
     ("form_home_last", "/fixtures", {"team": "<HOME_ID>", "last": 10}),
     ("form_away_last", "/fixtures", {"team": "<AWAY_ID>", "last": 10}),
+    ("form_home_extended", "/fixtures", {"team": "<HOME_ID>", "last": 20}),
+    ("form_away_extended", "/fixtures", {"team": "<AWAY_ID>", "last": 20}),
+    
+    # Team and player information
     ("squad_home", "/players/squads", {"team": "<HOME_ID>"}),
     ("squad_away", "/players/squads", {"team": "<AWAY_ID>"}),
     ("team_home_info", "/teams", {"id": "<HOME_ID>"}),
     ("team_away_info", "/teams", {"id": "<AWAY_ID>"}),
+    
+    # League context
     ("topscorers_primary", "/players/topscorers", {"league": "<LEAGUE_ID>", "season": "<SEASON>"}),
     ("standings_primary", "/standings", {"league": "<LEAGUE_ID>", "season": "<SEASON>"}),
     ("team_stats_home", "/teams/statistics", {"league": "<LEAGUE_ID>", "season": "<SEASON>", "team": "<HOME_ID>"}),
     ("team_stats_away", "/teams/statistics", {"league": "<LEAGUE_ID>", "season": "<SEASON>", "team": "<AWAY_ID>"}),
+    
+    # Enhanced statistics and analysis
+    ("team_home_seasons", "/teams/seasons", {"team": "<HOME_ID>"}),
+    ("team_away_seasons", "/teams/seasons", {"team": "<AWAY_ID>"}),
+    ("team_home_venues", "/venues", {"id": "<HOME_VENUE_ID>"}),
+    ("league_info", "/leagues", {"id": "<LEAGUE_ID>"}),
+    ("coach_home", "/coachs", {"team": "<HOME_ID>"}),
+    ("coach_away", "/coachs", {"team": "<AWAY_ID>"}),
+    
+    # Injuries and player availability
     ("injuries_league", "/injuries", {"league":"<LEAGUE_ID>", "season":"<SEASON>"}),
+    ("injuries_home", "/injuries", {"team": "<HOME_ID>"}),
+    ("injuries_away", "/injuries", {"team": "<AWAY_ID>"}),
+    
+    # Fixture-specific detailed data
     ("fixture_events", "/fixtures/events", {"fixture":"<FIXTURE_ID>"}),
     ("fixture_lineups", "/fixtures/lineups", {"fixture":"<FIXTURE_ID>"}),
     ("fixture_statistics", "/fixtures/statistics", {"fixture":"<FIXTURE_ID>"}),
     ("fixture_players_stats", "/fixtures/players", {"fixture":"<FIXTURE_ID>"}),
+    
+    # Advanced metrics (if available)
+    ("team_home_transfers", "/transfers", {"team": "<HOME_ID>"}),
+    ("team_away_transfers", "/transfers", {"team": "<AWAY_ID>"}),
+    ("sidelined_home", "/sidelined", {"team": "<HOME_ID>"}),
+    ("sidelined_away", "/sidelined", {"team": "<AWAY_ID>"}),
+    
+    # Additional context for better predictions
+    ("team_home_countries", "/teams/countries"),
+    ("timezone_info", "/timezone"),
 ]
 
-async def fetch_fixture_bundle(client: APIFootballClient, fx_obj: dict, root: Path):
-    fixture=fx_obj.get("fixture", {})
-    league=fx_obj.get("league", {})
-    teams=fx_obj.get("teams", {})
-    fid=fixture.get("id")
-    if not fid: return
-    league_id=league.get("id")
-    season=league.get("season")
-    home_id=teams.get("home", {}).get("id")
-    away_id=teams.get("away", {}).get("id")
-    out_dir=root / f"out_fixture_{fid}"
-    out_dir_raw=out_dir/"raw"
+async def fetch_fixture_bundle(client: APIFootballClient, fx_obj: dict, root: Path, endpoint_list=None):
+    """
+    Egy fixture-hez tartozó összes szükséges API-Football endpoint lekérése és mentése.
+
+    Újdonságok:
+    - Rate-limit barát működés az APIFootballClient-ben (throttling).
+    - Nyers cache használata: ha érvényes raw már megvan, nem kérdezünk újra.
+    - Endpoint-trimmelés env alapján: nehéz/ritkán használt hívások kihagyása.
+    - Venues endpoint skip, ha a venue id nem érvényes (0/None).
+    """
+    def _valid_cached(js: dict) -> bool:
+        if not isinstance(js, dict):
+            return False
+        if js.get("parse_error"):
+            return False
+        # API-Football struktúrák: ha "results">0 vagy "response" nem üres
+        try:
+            if int(js.get("results", 0)) > 0:
+                return True
+        except Exception:
+            pass
+        resp = js.get("response")
+        if isinstance(resp, list) and len(resp) > 0:
+            return True
+        return False
+
+    fixture = fx_obj.get("fixture", {}) or {}
+    league = fx_obj.get("league", {}) or {}
+    teams = fx_obj.get("teams", {}) or {}
+    fid = fixture.get("id")
+    if not fid:
+        return
+
+    league_id = league.get("id")
+    season = league.get("season")
+    home_id = teams.get("home", {}).get("id")
+    away_id = teams.get("away", {}).get("id")
+    venue = fixture.get("venue", {}) or {}
+    home_venue_id = venue.get("id")  # lehet 0/None
+
+    out_dir = root / f"out_fixture_{fid}"
+    out_dir_raw = out_dir / "raw"
     out_dir_raw.mkdir(parents=True, exist_ok=True)
-    summary_meta={
+
+    summary_meta = {
         "fixture_id": fid,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "endpoints": [],
-        "league_tier": LEAGUE_MANAGER.tier_of(league_id) if league_id else None
+        "league_tier": LEAGUE_MANAGER.tier_of(league_id) if league_id else None,
     }
-    async def fetch_one(tag, endpoint, param_tpl):
-        params={}
-        for k,v in param_tpl.items():
-            if isinstance(v,str):
-                v2=(v.replace("<FIXTURE_ID>", str(fid))
-                      .replace("<LEAGUE_ID>", str(league_id))
-                      .replace("<SEASON>", str(season))
-                      .replace("<HOME_ID>", str(home_id))
-                      .replace("<AWAY_ID>", str(away_id)))
-                params[k]=v2
+
+    # Dinamikus skip lista env flag-ek alapján
+    SKIP_TAGS = set()
+    # Mindig kihagyható: nem használt noise endpointok
+    SKIP_TAGS |= {"timezone_info", "team_home_countries"}
+
+    if not FETCH_EXTENDED_STATS:
+        SKIP_TAGS |= {
+            "h2h_extended",
+            "form_home_extended",
+            "form_away_extended",
+            "team_home_seasons",
+            "team_away_seasons",
+            "league_info",
+        }
+
+    if not FETCH_INJURY_DETAILS:
+        SKIP_TAGS |= {"injuries_league", "injuries_home", "injuries_away", "sidelined_home", "sidelined_away"}
+
+    if not FETCH_TRANSFER_DATA:
+        SKIP_TAGS |= {"team_home_transfers", "team_away_transfers"}
+
+    if not FETCH_COACH_INFO:
+        SKIP_TAGS |= {"coach_home", "coach_away"}
+
+    # Ha a venue id nem érvényes (0/None), ne hívjuk a venues endpointot
+    CONDITIONAL_SKIP = set()
+    if not home_venue_id:
+        CONDITIONAL_SKIP.add("team_home_venues")
+
+    async def fetch_one(tag: str, endpoint: str, param_tpl: dict):
+        # Paraméter-sablon kitöltése
+        params = {}
+        for k, v in (param_tpl or {}).items():
+            if isinstance(v, str):
+                v2 = (
+                    v.replace("<FIXTURE_ID>", str(fid))
+                     .replace("<LEAGUE_ID>", str(league_id))
+                     .replace("<SEASON>", str(season))
+                     .replace("<HOME_ID>", str(home_id))
+                     .replace("<AWAY_ID>", str(away_id))
+                     .replace("<HOME_VENUE_ID>", str(home_venue_id if home_venue_id else ""))  # üres, ha nincs
+                )
+                params[k] = v2
             else:
-                params[k]=v
-        result=await client.get(endpoint, params)
-        if SAVE_RAW:
-            h=hash_params(params)
-            safe_write_json(out_dir_raw / f"{tag}__{h}.json", result)
-        summary_meta["endpoints"].append({
-            "tag": tag,
-            "endpoint": endpoint,
-            "params": params,
-            "results": result.get("results"),
-            "errors": result.get("errors", []),
-        })
-    tasks=[asyncio.create_task(fetch_one(tag, ep, tpl)) for tag,ep,tpl in FIXTURE_ENDPOINTS]
-    await asyncio.gather(*tasks, return_exceptions=True)
-    safe_write_json(out_dir/"summary.json", summary_meta)
-    safe_write_json(out_dir/"primary_fixture.json", fx_obj)
+                params[k] = v
+
+        # Cache kulcs
+        h = hash_params(params)
+        raw_path = out_dir_raw / f"{tag}__{h}.json"
+
+        try:
+            # Ha van érvényes cache és engedélyezett a raw mentés, ne kérdezzünk újra
+            if SAVE_RAW and raw_path.exists():
+                js_cached = load_json(raw_path)
+                if _valid_cached(js_cached):
+                    summary_meta["endpoints"].append(
+                        {
+                            "tag": tag,
+                            "endpoint": endpoint,
+                            "params": params,
+                            "results": (js_cached or {}).get("results"),
+                            "errors": (js_cached or {}).get("errors", []),
+                            "cached": True,
+                        }
+                    )
+                    return  # kihagyjuk a hálózati kérést
+
+            # Hálózati kérés
+            result = await client.get(endpoint, params)
+            if SAVE_RAW:
+                safe_write_json(raw_path, result)
+            summary_meta["endpoints"].append(
+                {
+                    "tag": tag,
+                    "endpoint": endpoint,
+                    "params": params,
+                    "results": (result or {}).get("results"),
+                    "errors": (result or {}).get("errors", []),
+                    "cached": False,
+                }
+            )
+        except Exception as e:
+            # Ne dobjuk tovább – jegyezzük fel az endpoint hibát és menjünk tovább
+            summary_meta["endpoints"].append(
+                {
+                    "tag": tag,
+                    "endpoint": endpoint,
+                    "params": params,
+                    "results": None,
+                    "errors": [f"{e.__class__.__name__}: {e}"],
+                    "cached": False,
+                }
+            )
+
+    # Coroutinok összeállítása, skip-ek alkalmazása
+    coros = []
+    endpoints_to_use = endpoint_list if endpoint_list is not None else FIXTURE_ENDPOINTS
+    for item in endpoints_to_use:
+        try:
+            if isinstance(item, (list, tuple)):
+                if len(item) == 3:
+                    tag, ep, tpl = item
+                elif len(item) == 2:
+                    tag, ep = item
+                    tpl = {}
+                else:
+                    summary_meta["endpoints"].append(
+                        {
+                            "tag": None,
+                            "endpoint": None,
+                            "params": {},
+                            "results": None,
+                            "errors": [f"invalid_endpoint_tuple_len:{len(item)}"],
+                        }
+                    )
+                    continue
+            else:
+                summary_meta["endpoints"].append(
+                    {
+                        "tag": None,
+                        "endpoint": None,
+                        "params": {},
+                        "results": None,
+                        "errors": ["invalid_endpoint_entry_type"],
+                    }
+                )
+                continue
+
+            if tag in SKIP_TAGS or tag in CONDITIONAL_SKIP:
+                summary_meta["endpoints"].append(
+                    {
+                        "tag": tag,
+                        "endpoint": ep,
+                        "params": tpl or {},
+                        "results": None,
+                        "errors": ["skipped_by_config"],
+                    }
+                )
+                continue
+
+            coros.append(fetch_one(tag, ep, tpl))
+        except Exception as e:
+            summary_meta["endpoints"].append(
+                {
+                    "tag": None,
+                    "endpoint": None,
+                    "params": {},
+                    "results": None,
+                    "errors": [f"endpoint_build_error: {e.__class__.__name__}: {e}"],
+                }
+            )
+
+    try:
+        if coros:
+            # A kliens rate limiter-e gondoskodik a tempóról
+            await asyncio.gather(*coros, return_exceptions=False)
+    finally:
+        safe_write_json(out_dir / "summary.json", summary_meta)
+        safe_write_json(out_dir / "primary_fixture.json", fx_obj)
+
+async def fetch_fixture_bundle_with_custom_endpoints(client: APIFootballClient, fx_obj: dict, root: Path, endpoint_list):
+    """
+    fetch_fixture_bundle, de az endpoint_list paraméterrel (pl. nagyobb 'last' értékekkel).
+    """
+    await fetch_fixture_bundle(client, fx_obj, root, endpoint_list=endpoint_list)
 
 # =========================================================
 # (D) Kalibráció history update + trimming + reliability
@@ -3931,9 +4976,9 @@ def generate_comprehensive_stats(analyzed_results: list[dict], output_path: Path
             stats["summary"]["other_leagues"] += 1
         
         # 1X2 Market Analysis
-        odds_1x2 = r.get("odds", {})
-        edges_1x2 = r.get("edge", {})
-        probs_1x2 = r.get("model_probs", {})
+        odds_1x2 = r.get("odds", {}) or {}
+        edges_1x2 = r.get("edge", {}) or {}
+        probs_1x2 = r.get("model_probs", {}) or {}
         
         if odds_1x2 and edges_1x2 and probs_1x2:
             market_strength_1x2 = calculate_market_strength(odds_1x2, "1X2")
@@ -3981,113 +5026,119 @@ def generate_comprehensive_stats(analyzed_results: list[dict], output_path: Path
                         "meets_publish_threshold": edge_val >= PUBLISH_MIN_EDGE_TOP if match_data["is_top_league"] else edge_val >= PUBLISH_MIN_EDGE_OTHER
                     }
         
-        # BTTS Market Analysis
-        market_odds_btts = r.get("market_odds", {})
-        market_edges_btts = r.get("market_edge", {})
-        market_probs_btts = r.get("market_probs", {})
-        
-        if market_odds_btts and market_edges_btts and market_probs_btts:
-            y_odds = market_odds_btts.get("yes")
-            n_odds = market_odds_btts.get("no")
-            
-            if y_odds is not None and n_odds is not None:
-                try:
-                    y_odds, n_odds = float(y_odds), float(n_odds)
-                    btts_odds = {"yes": y_odds, "no": n_odds}
-                    market_strength_btts = calculate_market_strength(btts_odds, "BTTS")
-                    
-                    # Implied probabilities
-                    ia, ib = 1/y_odds, 1/n_odds
-                    s = ia + ib
-                    implied_probs_btts = {"yes": ia/s, "no": ib/s} if s > 0 else {}
-                    
-                    match_data["markets"]["BTTS"] = {
-                        "market_strength": market_strength_btts,
-                        "overround": s,
-                        "selections": {}
+        # BTTS Market Analysis (btts_yes / btts_no kulcsok)
+        market_odds_all = r.get("market_odds", {}) or {}
+        market_edges_all = r.get("market_edge", {}) or {}
+        market_probs_all = r.get("market_probs", {}) or {}
+
+        y_odds = market_odds_all.get("btts_yes")
+        n_odds = market_odds_all.get("btts_no")
+
+        if y_odds is not None and n_odds is not None:
+            try:
+                y_odds, n_odds = float(y_odds), float(n_odds)
+                # market strength-hez “yes/no” párt számolunk
+                btts_odds = {"yes": y_odds, "no": n_odds}
+                market_strength_btts = calculate_market_strength(btts_odds, "BTTS")
+
+                ia, ib = 1/y_odds, 1/n_odds
+                s = ia + ib
+                implied_probs_btts = {"yes": ia/s, "no": ib/s} if s > 0 else {}
+
+                match_data["markets"]["BTTS"] = {
+                    "market_strength": market_strength_btts,
+                    "overround": s,
+                    "selections": {}
+                }
+
+                # YES
+                edge_yes = market_edges_all.get("btts_yes")
+                model_yes = market_probs_all.get("btts_yes")
+                if edge_yes is not None and model_yes is not None:
+                    match_data["markets"]["BTTS"]["selections"]["yes"] = {
+                        "odds": y_odds,
+                        "model_probability": model_yes,
+                        "market_probability": implied_probs_btts.get("yes", 0),
+                        "edge": edge_yes,
+                        "value_score": edge_yes * (1 + market_strength_btts / 100 * 0.1),
+                        "confidence_level": ("Magas" if edge_yes >= 0.15 else "Közepes" if edge_yes >= 0.08 else "Alacsony"),
+                        "raw_value": model_yes * y_odds - 1,
+                        "probability_difference": model_yes - implied_probs_btts.get("yes", 0),
+                        "meets_publish_threshold": edge_yes >= (PUBLISH_MIN_EDGE_TOP if match_data["is_top_league"] else PUBLISH_MIN_EDGE_OTHER)
                     }
-                    
-                    for sel in ("yes", "no"):
-                        if sel in market_edges_btts and sel in market_probs_btts:
-                            edge_val = market_edges_btts[sel]
-                            model_prob = market_probs_btts[sel]
-                            market_prob = implied_probs_btts.get(sel, 0)
-                            odds_val = y_odds if sel == "yes" else n_odds
-                            
-                            value_score = edge_val * (1 + market_strength_btts / 100 * 0.1)
-                            
-                            confidence = "Alacsony"
-                            if edge_val >= 0.15:
-                                confidence = "Magas"
-                            elif edge_val >= 0.08:
-                                confidence = "Közepes"
-                            
-                            match_data["markets"]["BTTS"]["selections"][sel] = {
-                                "odds": odds_val,
-                                "model_probability": model_prob,
-                                "market_probability": market_prob,
-                                "edge": edge_val,
-                                "value_score": value_score,
-                                "confidence_level": confidence,
-                                "raw_value": model_prob * odds_val - 1,
-                                "probability_difference": model_prob - market_prob,
-                                "meets_publish_threshold": edge_val >= PUBLISH_MIN_EDGE_TOP if match_data["is_top_league"] else edge_val >= PUBLISH_MIN_EDGE_OTHER
-                            }
-                except:
-                    pass
-        
-        # O/U 2.5 Market Analysis
-        if market_odds_btts and market_edges_btts and market_probs_btts:
-            ov_odds = market_odds_btts.get("over25")
-            un_odds = market_odds_btts.get("under25")
-            
-            if ov_odds is not None and un_odds is not None:
-                try:
-                    ov_odds, un_odds = float(ov_odds), float(un_odds)
-                    ou_odds = {"over": ov_odds, "under": un_odds}
-                    market_strength_ou = calculate_market_strength(ou_odds, "O/U")
-                    
-                    # Implied probabilities
-                    ia, ib = 1/ov_odds, 1/un_odds
-                    s = ia + ib
-                    implied_probs_ou = {"over25": ia/s, "under25": ib/s} if s > 0 else {}
-                    
-                    match_data["markets"]["O/U 2.5"] = {
-                        "market_strength": market_strength_ou,
-                        "overround": s,
-                        "selections": {}
+
+                # NO
+                edge_no = market_edges_all.get("btts_no")
+                model_no = market_probs_all.get("btts_no")
+                if edge_no is not None and model_no is not None:
+                    match_data["markets"]["BTTS"]["selections"]["no"] = {
+                        "odds": n_odds,
+                        "model_probability": model_no,
+                        "market_probability": implied_probs_btts.get("no", 0),
+                        "edge": edge_no,
+                        "value_score": edge_no * (1 + market_strength_btts / 100 * 0.1),
+                        "confidence_level": ("Magas" if edge_no >= 0.15 else "Közepes" if edge_no >= 0.08 else "Alacsony"),
+                        "raw_value": model_no * n_odds - 1,
+                        "probability_difference": model_no - implied_probs_btts.get("no", 0),
+                        "meets_publish_threshold": edge_no >= (PUBLISH_MIN_EDGE_TOP if match_data["is_top_league"] else PUBLISH_MIN_EDGE_OTHER)
                     }
-                    
-                    for sel_raw in ("over25", "under25"):
-                        if sel_raw in market_edges_btts and sel_raw in market_probs_btts:
-                            edge_val = market_edges_btts[sel_raw]
-                            model_prob = market_probs_btts[sel_raw]
-                            market_prob = implied_probs_ou.get(sel_raw, 0)
-                            odds_val = ov_odds if sel_raw == "over25" else un_odds
-                            
-                            value_score = edge_val * (1 + market_strength_ou / 100 * 0.1)
-                            
-                            confidence = "Alacsony"
-                            if edge_val >= 0.15:
-                                confidence = "Magas"
-                            elif edge_val >= 0.08:
-                                confidence = "Közepes"
-                            
-                            selection_name = "over" if sel_raw == "over25" else "under"
-                            
-                            match_data["markets"]["O/U 2.5"]["selections"][selection_name] = {
-                                "odds": odds_val,
-                                "model_probability": model_prob,
-                                "market_probability": market_prob,
-                                "edge": edge_val,
-                                "value_score": value_score,
-                                "confidence_level": confidence,
-                                "raw_value": model_prob * odds_val - 1,
-                                "probability_difference": model_prob - market_prob,
-                                "meets_publish_threshold": edge_val >= PUBLISH_MIN_EDGE_TOP if match_data["is_top_league"] else edge_val >= PUBLISH_MIN_EDGE_OTHER
-                            }
-                except:
-                    pass
+            except:
+                pass
+        
+        # O/U 2.5 Market Analysis (over25 / under25 kulcsok)
+        ov_odds = market_odds_all.get("over25")
+        un_odds = market_odds_all.get("under25")
+        
+        if ov_odds is not None and un_odds is not None:
+            try:
+                ov_odds, un_odds = float(ov_odds), float(un_odds)
+
+                ia, ib = 1/ov_odds, 1/un_odds
+                s = ia + ib
+                implied_probs_ou = {"over25": ia/s, "under25": ib/s} if s > 0 else {}
+
+                ou_odds_pair = {"over": ov_odds, "under": un_odds}
+                market_strength_ou = calculate_market_strength(ou_odds_pair, "O/U")
+
+                match_data["markets"]["O/U 2.5"] = {
+                    "market_strength": market_strength_ou,
+                    "overround": s,
+                    "selections": {}
+                }
+
+                # OVER
+                edge_over = market_edges_all.get("over25")
+                model_over = market_probs_all.get("over25")
+                if edge_over is not None and model_over is not None:
+                    match_data["markets"]["O/U 2.5"]["selections"]["over"] = {
+                        "odds": ov_odds,
+                        "model_probability": model_over,
+                        "market_probability": implied_probs_ou.get("over25", 0.0),
+                        "edge": edge_over,
+                        "value_score": edge_over * (1 + market_strength_ou / 100 * 0.1),
+                        "confidence_level": ("Magas" if edge_over >= 0.15 else "Közepes" if edge_over >= 0.08 else "Alacsony"),
+                        "raw_value": model_over * ov_odds - 1,
+                        "probability_difference": model_over - implied_probs_ou.get("over25", 0.0),
+                        "meets_publish_threshold": edge_over >= (PUBLISH_MIN_EDGE_TOP if match_data["is_top_league"] else PUBLISH_MIN_EDGE_OTHER)
+                    }
+
+                # UNDER
+                edge_under = market_edges_all.get("under25")
+                model_under = market_probs_all.get("under25")
+                if edge_under is not None and model_under is not None:
+                    match_data["markets"]["O/U 2.5"]["selections"]["under"] = {
+                        "odds": un_odds,
+                        "model_probability": model_under,
+                        "market_probability": implied_probs_ou.get("under25", 0.0),
+                        "edge": edge_under,
+                        "value_score": edge_under * (1 + market_strength_ou / 100 * 0.1),
+                        "confidence_level": ("Magas" if edge_under >= 0.15 else "Közepes" if edge_under >= 0.08 else "Alacsony"),
+                        "raw_value": model_under * un_odds - 1,
+                        "probability_difference": model_under - implied_probs_ou.get("under25", 0.0),
+                        "meets_publish_threshold": edge_under >= (PUBLISH_MIN_EDGE_TOP if match_data["is_top_league"] else PUBLISH_MIN_EDGE_OTHER)
+                    }
+            except:
+                pass
         
         stats["detailed_matches"].append(match_data)
     
@@ -4346,6 +5397,18 @@ async def run_pipeline(fetch: bool, analyze: bool,
             stats_path = DATA_ROOT / f"comprehensive_stats_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
             generate_comprehensive_stats(analyzed_res, stats_path)
             logger.info("Comprehensive statistics generated: %s", stats_path.name)
+            
+            # Generate enhanced statistics with feature engineering insights
+            if ENABLE_FEATURE_ENGINEERING and HAVE_FEATURE_ENGINEERING:
+                enhanced_stats_path = DATA_ROOT / f"enhanced_stats_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
+                enhanced_stats = generate_enhanced_statistics(analyzed_res, enhanced_stats_path)
+                logger.info("Enhanced statistics with feature engineering generated: %s", enhanced_stats_path.name)
+                
+                # Generate feature importance analysis
+                importance_path = DATA_ROOT / f"feature_importance_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
+                importance_analysis = analyze_feature_importance(analyzed_res)
+                safe_write_json(importance_path, importance_analysis)
+                logger.info("Feature importance analysis generated: %s", importance_path.name)
     RUNTIME_STATE["last_run"]=datetime.now(timezone.utc).isoformat()
     save_state()
     summary={
@@ -4364,8 +5427,151 @@ async def run_pipeline(fetch: bool, analyze: bool,
     GLOBAL_RUNTIME["last_picks_file"]=picks_file.name
     logger.info("Futás kész. fetched=%d analyzed=%d picks=%d Tippmix=%s -> %s",
                 len(new_fetched), len(analyzed_res), len(picks), USE_TIPPMIX, picks_file.name)
+
+    # --- Automatikus teljes dump generálás ---
+    generate_all_fixtures_full_dump(DATA_ROOT)
+
     return summary
 
+# --- IDE ILLSZESZD BE, önállóan, nem class-ban! ---
+async def fetch_past_fixtures_for_today_48_months(client: APIFootballClient, root: Path = DATA_ROOT, history_depth: int = 100):
+    """
+    Lekéri a mai mérkőzésekhez az utolsó 48 hónap összes lezárt (FT) múltbeli meccsét (csapatonként és H2H), mindenhez bundle + analysis.
+    """
+    d = date.today()
+    js = await client.get("/fixtures", {"date": d.isoformat()})
+    fixtures = js.get("response") or []
+    logger.info("Mai mérkőzések száma: %d", len(fixtures))
+
+    past_fixtures = set()
+    cutoff_dt = datetime.now(timezone.utc) - timedelta(days=48*30)  # 48 hónap ~ 4 év
+
+    # 1. Gyűjtsd a home/away csapat ID-ket, H2H párokat
+    for fx in fixtures:
+        home_id = fx.get("teams", {}).get("home", {}).get("id")
+        away_id = fx.get("teams", {}).get("away", {}).get("id")
+
+        # a) Home team összes FT meccse (utolsó X db, de csak cutoff után)
+        js_home = await client.get("/fixtures", {"team": home_id, "status": "FT", "last": history_depth})
+        for pf in js_home.get("response", []):
+            pfid = pf.get("fixture", {}).get("id")
+            ts = pf.get("fixture", {}).get("timestamp")
+            if pfid and ts:
+                dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+                if dt > cutoff_dt:
+                    past_fixtures.add(pfid)
+        # b) Away team összes FT meccse
+        js_away = await client.get("/fixtures", {"team": away_id, "status": "FT", "last": history_depth})
+        for pf in js_away.get("response", []):
+            pfid = pf.get("fixture", {}).get("id")
+            ts = pf.get("fixture", {}).get("timestamp")
+            if pfid and ts:
+                dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+                if dt > cutoff_dt:
+                    past_fixtures.add(pfid)
+        # c) H2H összes FT meccse
+        js_h2h = await client.get("/fixtures/headtohead", {"h2h": f"{home_id}-{away_id}", "status": "FT", "last": history_depth})
+        for pf in js_h2h.get("response", []):
+            pfid = pf.get("fixture", {}).get("id")
+            ts = pf.get("fixture", {}).get("timestamp")
+            if pfid and ts:
+                dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+                if dt > cutoff_dt:
+                    past_fixtures.add(pfid)
+
+    logger.info("Összes múltbeli (lezárt, cutoff után) fixture ID: %d", len(past_fixtures))
+    # 2. Minden múltbeli meccshez bundle + analysis
+    for idx, pfid in enumerate(sorted(past_fixtures), 1):
+        js_pf = await client.get("/fixtures", {"id": pfid})
+        resp = js_pf.get("response") or []
+        if resp:
+            await fetch_fixture_bundle(client, resp[0], root)
+            res = analyze_fixture(root, pfid, enhanced_tools=None)
+            logger.info("Múltbeli bundle+analysis: %d/%d | FI=%s", idx, len(past_fixtures), pfid)
+
+    # 3. Dump generálás
+    dump_path = root / f"past_fixtures_full_dump_{date.today().isoformat()}.json"
+    analyzed = []
+    for pfid in past_fixtures:
+        af = root / f"out_fixture_{pfid}" / "analysis.json"
+        if af.exists():
+            try:
+                js = json.loads(af.read_text(encoding="utf-8"))
+                analyzed.append(js)
+            except Exception:
+                continue
+    with dump_path.open("w", encoding="utf-8") as f:
+        json.dump(analyzed, f, indent=2, ensure_ascii=False)
+    print(f"Kész: {len(analyzed)} múltbeli mérkőzés dump-olva: {dump_path}")
+
+# === ÚJ: Aktuális nap elemzett mérkőzéseihez teljes történelmi adatok letöltése ===
+async def fetch_today_fixtures_full_history(client: APIFootballClient, root: Path = DATA_ROOT, history_depth: int = 50):
+    """
+    Az aktuális napon lévő összes mérkőzéshez letölti:
+      - A fixture-t (ma játszott meccs)
+      - Minden kapcsolódó történelmi adatot (form, h2h, stat, season, injuries, toplisták, stb.) nagyobb last paraméterrel.
+    """
+    d = date.today()
+    js = await client.get("/fixtures", {"date": d.isoformat()})
+    fixtures = js.get("response") or []
+    logger.info("Aktuális napi mérkőzések száma: %d", len(fixtures))
+
+    # 1. Minden endpoint sablont átírunk, ahol van 'last' paraméter → history_depth értékre
+    def patch_last_param(ep_list, depth):
+        patched = []
+        for item in ep_list:
+            if isinstance(item, (list, tuple)):
+                if len(item) == 3:
+                    tag, ep, params = item
+                    if "last" in params:
+                        params = params.copy()
+                        params["last"] = depth
+                    patched.append((tag, ep, params))
+                elif len(item) == 2:
+                    tag, ep = item
+                    patched.append((tag, ep, {}))
+                else:
+                    continue
+            else:
+                continue
+        return patched
+
+    patched_endpoints = patch_last_param(FIXTURE_ENDPOINTS, history_depth)
+
+    # 2. Minden fixture-re teljes bundle letöltése (az összes endpoint, ami történelmi adat is)
+    for idx, fx in enumerate(fixtures, 1):
+        # Patch: fetch_fixture_bundle-t hívjuk, de a patched_endpoints listával
+        await fetch_fixture_bundle_with_custom_endpoints(client, fx, root, patched_endpoints)
+        logger.info("Bundle letöltve: %d/%d | FI=%s", idx, len(fixtures), fx.get("fixture",{}).get("id"))
+
+    # 3. Elemzés minden fixture-re (összes történelmi adat beépül a feature engineeringbe)
+    analyzed = []
+    for fx in fixtures:
+        fid = fx.get("fixture", {}).get("id")
+        if fid:
+            res = analyze_fixture(root, fid, enhanced_tools=None)
+            if res: analyzed.append(res)
+
+    # 4. Dump generálás csak az aktuális napi meccsekből
+    today_dump_path = root / f"all_fixtures_full_dump_{date.today().isoformat()}.json"
+    with today_dump_path.open("w", encoding="utf-8") as f:
+        json.dump(analyzed, f, indent=2, ensure_ascii=False)
+    print(f"Kész: {len(analyzed)} aktuális napi mérkőzés dump-olva: {today_dump_path}")
+
+# --- Segéd: fetch_fixture_bundle custom endpoints ---
+async def fetch_fixture_bundle_with_custom_endpoints(client: APIFootballClient, fx_obj: dict, root: Path, endpoint_list):
+    """
+    fetch_fixture_bundle, de az endpoint_list paraméterrel (pl. nagyobb 'last' értékekkel).
+    """
+    # Másold ide a fetch_fixture_bundle lényegét, de FIXTURE_ENDPOINTS helyett endpoint_list-et használj.
+    # Tipp: a fetch_fixture_bundle definícióján belül csak cseréld ki a FIXTURE_ENDPOINTS sort erre:
+    # for item in endpoint_list:
+    #   ...
+    # (A teljes bundle logika ugyanaz.)
+    # Ha kell, kiemelheted a fetch_fixture_bundle-ból a for... ciklust egy új függvénybe.
+    # Ha nem akarod duplikálni: a fetch_fixture_bundle végén hívj meg egy _gather_endpoints(client, fx_obj, root, endpoint_list) segédfüggvényt!
+    # Példa (rövidítve):
+    await fetch_fixture_bundle(client, fx_obj, root, endpoint_list=endpoint_list)
 # =========================================================
 # Kalibrátor retrain + Bayes dataset export
 # =========================================================
@@ -4471,6 +5677,106 @@ class TelegramBot:
                     await s.post(self.base + "/sendPhoto", data=form)
         except Exception:
             logger.exception("Telegram send_photo hiba")
+
+        # [ÚJ] Eredménykártya ütemező – TelegramBot osztályban
+    def schedule_result_ticket_update(self, enhanced_tickets: dict, logo_path: str | None, chat_id: str | None):
+        """
+        Létrehoz egy háttérfeladatot, ami a legkésőbbi kickoff + 2h10m után:
+          - frissíti a fixture-eket
+          - kiértékel (WIN/LOSS/POSTPONED)
+          - elküldi az eredménykártyát
+        """
+        async def _task():
+            try:
+                # Gyűjtsük a fixture ID-ket és a tervezett időket
+                entries = []
+                for k in ("x1x2", "btts", "overunder"):
+                    lst = enhanced_tickets.get(k) or []
+                    for e in lst:
+                        entries.append(e)
+
+                fids = [e.get("fixture_id") for e in entries if e.get("fixture_id")]
+                # kickoff max idő (UTC)
+                max_ts = 0
+                for fid in fids:
+                    pf = DATA_ROOT / f"out_fixture_{fid}" / "primary_fixture.json"
+                    if pf.exists():
+                        try:
+                            js = json.loads(pf.read_text(encoding="utf-8"))
+                            ts = ((js.get("fixture") or {}).get("timestamp")) or 0
+                            if ts and ts > max_ts:
+                                max_ts = int(ts)
+                        except Exception:
+                            continue
+
+                # Várakozás a lefújásig (2h10m buffer)
+                due = max_ts + 130*60 if max_ts else int(time.time()) + 90*60
+                sleep_s = max(0, due - int(time.time()))
+                if sleep_s > 0:
+                    logger.info("[RESULT] Alvás a kiértékelésig: %.1f s", sleep_s)
+                    await asyncio.sleep(sleep_s)
+
+                # Frissítés – újra lekérjük a fixture-eket
+                async with APIFootballClient(API_KEY, API_BASE) as client:
+                    for fid in fids:
+                        try:
+                            await refetch_single_fixture(client, fid, DATA_ROOT)
+                            await asyncio.sleep(0.05)
+                        except Exception:
+                            logger.exception("[RESULT] Refetch hiba (fid=%s)", fid)
+
+                # Kiértékelés és result map összeállítása
+                results_by_fixture = {}
+                win = loss = post = 0
+                for e in entries:
+                    fid = e.get("fixture_id")
+                    if not fid:
+                        continue
+                    market = e.get("market") or ""
+                    selection = e.get("selection") or ""
+                    # O/U label normalizálás
+                    if market == "O/U 2.5":
+                        s_up = selection.upper()
+                        if s_up.startswith("OVER"):
+                            selection = "OVER"
+                        elif s_up.startswith("UNDER"):
+                            selection = "UNDER"
+
+                    primary_info = get_fixture_status_and_score(fid)
+                    status = evaluate_selection_result(market, selection, primary_info)
+                    if status == "WIN": win += 1
+                    elif status == "LOSS": loss += 1
+                    else: post += 1
+
+                    gh = primary_info.get("home_goals_120", 0)
+                    ga = primary_info.get("away_goals_120", 0)
+                    score_txt = f"{gh}{SCORE_DASH}{ga}"
+                    label_hu = {"WIN": "NYERTES", "LOSS": "VESZTES", "POSTPONED": "ELHALASZTVA"}[status]
+
+                    key = f"{fid}:{market}"
+                    results_by_fixture[key] = {"status": status, "score": score_txt, "label": label_hu}
+
+                # Eredménykártya render és küldés
+                png_bytes = generate_ticket_card(
+                    enhanced_tickets,
+                    title="Eredmények",
+                    tz_label=LOCAL_TZ,
+                    logo_path=logo_path,
+                    watermark_mode="global",
+                    watermark_opacity=0.06,
+                    watermark_scale=0.30,
+                    results_by_fixture=results_by_fixture
+                )
+                caption = f"✅ Nyertes: {win} | ❌ Vesztes: {loss} | 🔵 Elhalasztva: {post}"
+                await self.send_photo(png_bytes, caption=caption, chat_id=chat_id or self.default_chat_id)
+            except Exception:
+                logger.exception("[RESULT] Eredménykártya ütemezett feladat hiba")
+
+        try:
+            asyncio.create_task(_task())
+            logger.info("[RESULT] Eredménykártya feladat ütemezve.")
+        except RuntimeError:
+            logger.warning("[RESULT] Nem sikerült ütemezni – nincs futó event loop.")
 
     async def handle_command(self, text: str, chat_id: str):
         parts = text.split()
@@ -4642,12 +5948,9 @@ class TelegramBot:
             
             summ = self.runtime.get("last_summary")
             if summ and summ.get("analyzed_results"):
-                # Piaconként 1 ajánlás
-                enhanced_tickets = select_best_tickets_enhanced(
-                    summ.get("analyzed_results"), only_today=True, max_tips_per_market=1
-                )
+                tickets = select_best_raw_tickets(summ.get("analyzed_results"), only_today=True)
             else:
-                enhanced_tickets = {"x1x2": [], "btts": [], "overunder": []}
+                tickets = {"x1x2": [], "btts": [], "overunder": []}                                                                                    
             
             parts = []
             x1x2_list = enhanced_tickets.get("x1x2") or []
@@ -4702,6 +6005,8 @@ class TelegramBot:
 
                 # 5) Küldés
                 await self.send_photo(png_bytes, caption=caption, chat_id=chat_id)
+                await self.send("Eredménykártya automatikusan érkezik a meccsek lefújása után.", chat_id) 
+                self.schedule_result_ticket_update(enhanced, logo_path="assets/logo.png", chat_id=chat_id)
 
             except Exception as e:
                 logger.exception("Ticket kép generálási hiba")
@@ -4758,109 +6063,20 @@ class TelegramBot:
                     f"  THRESHOLD={TIPPMIX_SIMILARITY_THRESHOLD} TIME_TOL={TIPPMIX_TIME_TOLERANCE_MIN}min\n"
                     f"  MarketGroup={TIPPMIX_MARKET_GROUP}", chat_id)
         elif cmd == "/run":
-            fixture_ids=None
-            days_override=None
-            if args:
-                if args[0]=="ids" and len(args)>1:
-                    fids=[]
-                    for a in args[1:]:
-                        if a.isdigit(): fids.append(int(a))
-                    fixture_ids=fids
-                elif args[0].isdigit():
-                    days_override=int(args[0])
-            await self.send(f"Futás indult (fetch+analyze) USE_TIPPMIX={USE_TIPPMIX}...", chat_id)
+            await self.send("Teljes /run pipeline indul (TOP ligák, full history, ML, szelvény, Telegram)...", chat_id)
             try:
-                summary = await run_pipeline(
-                    fetch=True,
-                    analyze=True,
-                    fixture_ids=fixture_ids,
-                    limit=self.runtime["fixture_limit"],
-                    cleanup_stale=False,
-                    refetch_missing=False,
-                    days_ahead_override=days_override
+                # HÍVD MEG A FENTI PIPELINE-T!
+                await full_run_pipeline_top_leagues(
+                    root_path=DATA_ROOT,
+                    history_depth=50,
+                    telegram=self,
+                    chat_id=chat_id,
+                    logo_path="assets/logo.png"
                 )
-                self.runtime["last_summary"] = summary
-                await self.send(
-                    f"Kész: fetched={len(summary['fetched'])} analyzed={summary['analyzed_count']} "
-                    f"picks={summary['picks_count']}", chat_id)
-
-                # AUTOMATIKUS SZELVÉNY ÜZENET /run után – piaconként 1 ajánlás
-                analyzed_results = summary.get("analyzed_results") or []
-                if analyzed_results:
-                    enhanced_tickets = select_best_tickets_enhanced(
-                        analyzed_results, only_today=True, max_tips_per_market=1
-                    )
-
-                    def fmt(entry, title):
-                        if not entry: return f"🚫 {title}: Nincs ajánlás"
-                        market_emoji = {"1X2": "⚽", "BTTS": "🥅", "O/U 2.5": "📊"}
-                        market_hu = {"1X2": "1X2", "BTTS": "BTTS", "O/U 2.5": "O/U 2.5"}
-
-                        selection = entry.get('selection', '')
-                        selection_hu = selection
-                        if 'home' in selection.lower():
-                            selection_hu = "Hazai győzelem"
-                        elif 'away' in selection.lower():
-                            selection_hu = "Vendég győzelem"
-                        elif 'draw' in selection.lower():
-                            selection_hu = "Döntetlen"
-                        elif selection.upper() == "YES":
-                            selection_hu = "Igen"
-                        elif selection.upper() == "NO":
-                            selection_hu = "Nem"
-                        elif "OVER" in selection.upper():
-                            selection_hu = "Felett 2.5"
-                        elif "UNDER" in selection.upper():
-                            selection_hu = "Alatt 2.5"
-
-                        edge_val = entry.get('edge', 0)
-                        confidence = "Alacsony"
-                        if edge_val >= 0.15:
-                            confidence = "Magas"
-                        elif edge_val >= 0.08:
-                            confidence = "Közepes"
-
-                        market_strength = entry.get('market_strength', None)
-                        market_strength_str = f"\n💪 Piac-erő: {market_strength:.1f}%" if market_strength is not None else ""
-
-                        model_prob = (entry.get('model_prob', 0) or 0) * 100
-                        market_prob = (entry.get('market_prob', 0) or 0) * 100
-                        kickoff = entry.get('kickoff_local', entry.get('kickoff_utc', '?'))
-
-                        return (
-                            f"{market_emoji.get(title, '⚽')} {market_hu.get(title, title)} – {entry.get('league_name','?')}\n"
-                            f"{entry.get('home_name','?')} vs {entry.get('away_name','?')}\n"
-                            f"🕒 {kickoff}\n"
-                            f"🎯 Tipp: {selection_hu} @ {entry['odds']}\n"
-                            f"📊 Modell: {model_prob:.1f}% | Piac: {market_prob:.1f}%\n"
-                            f"📈 Érték: +{edge_val*100:.1f}%\n"
-                            f"🔒 Bizalom: {confidence}{market_strength_str}"
-                        )
-
-                    # Vedd ki az első elemet piaconként (ha létezik)
-                    parts = []
-                    x1x2_list = enhanced_tickets.get("x1x2") or []
-                    btts_list = enhanced_tickets.get("btts") or []
-                    ou_list = enhanced_tickets.get("overunder") or []
-
-                    if x1x2_list:
-                        parts.append(fmt(x1x2_list[0], "1X2"))
-                    if btts_list:
-                        parts.append(fmt(btts_list[0], "BTTS"))
-                    if ou_list:
-                        parts.append(fmt(ou_list[0], "O/U 2.5"))
-
-                    if parts:
-                        await self.send("\n\n".join(parts), chat_id)
-                    else:
-                        await self.send("🚫 Nincs tipp ma", chat_id)
-                else:
-                    await self.send("🚫 Nincs friss elemzés – tipp nem küldhető.", chat_id)
-
+                await self.send("Teljes /run pipeline kész!", chat_id)
             except Exception as e:
                 logger.exception("Run hiba (telegram)")
                 await self.send(f"Hiba: {e}", chat_id)
-
         elif cmd in ("/autobets", "/autovalue"):
             await self.send("🎯 Automatikus value bet kiválasztás indul...", chat_id)
             try:
@@ -4926,8 +6142,222 @@ def parse_args():
     ap.add_argument("--export-bayes-dataset", action="store_true")
     ap.add_argument("--telegram-bot", action="store_true")
     ap.add_argument("--watch-odds", action="store_true", help="Odds watcher indítása a Telegram bot mellett")
+    ap.add_argument("--fetch-today-full-history", action="store_true", help="Az aktuális napon játszott összes mérkőzéshez MINDEN történelmi adatot letölt (nagy last paraméterrel)")
+    ap.add_argument("--history-depth", type=int, default=50, help="Hány meccsre visszamenőleg töltsön le H2H/FORM adatokat (default: 50)")
+    ap.add_argument("--fetch-past-for-today-48m", action="store_true", help="A mai meccsek összes múltbeli (FT, utolsó 48 hónap) bundle + analysis letöltése")
+    ap.add_argument("--szelveny", action="store_true", help="Mai szelvény generálása (mindhárom piac, szöveg és kép)")
     return ap.parse_args()
 
+import pandas as pd
+
+# --- ML pipeline + ticket + telegram küldés ---
+async def full_run_pipeline_top_leagues(
+    root_path: Path = DATA_ROOT,
+    history_depth: int = 50,
+    telegram: "TelegramBot" = None,
+    chat_id: str = None,
+    logo_path: str = "assets/logo.png"
+):
+    """
+    Teljes /run pipeline csak top ligákra, minden fontos lépéssel.
+    1. Lekéri és letölti a mai TOP ligás meccseket és a teljes történelmi bundle-t
+    2. Minden meccshez analysis-t generál + feature engineering
+    3. Betanítja az ML modellt az összes top ligás meccsen
+    4. Prediktál a mai meccsekre
+    5. Szelvényt generál (mindhárom piac)
+    6. Elküldi Telegramra szövegesen és képként
+    """
+    # 1. Lekéri a mai meccseket (csak top ligák)
+    async with APIFootballClient(API_KEY, API_BASE) as client:
+        await fetch_past_fixtures_for_today_top_leagues(client, root_path, history_depth=100)
+
+        js = await client.get("/fixtures", {"date": date.today().isoformat()})
+        all_fixtures = js.get("response") or []
+
+        # TOP ligák szűrés
+        top_league_ids = set()
+        for k in ("TIER1", "TIER1B"):
+            top_league_ids |= set(LEAGUE_MANAGER.tier_cfg["tiers"].get(k, []))
+        fixtures = [fx for fx in all_fixtures if fx.get("league", {}).get("id") in top_league_ids]
+
+        logger.info(f"Mai TOP ligás mérkőzések: {len(fixtures)}")
+
+        # 2. Minden fixture-re teljes history bundle (history_depth paraméterrel)
+        def patch_last_param(ep_list, depth):
+            patched = []
+            for item in ep_list:
+                if isinstance(item, (list, tuple)):
+                    if len(item) == 3:
+                        tag, ep, params = item
+                        if "last" in params:
+                            params = params.copy()
+                            params["last"] = depth
+                        patched.append((tag, ep, params))
+                    elif len(item) == 2:
+                        tag, ep = item
+                        patched.append((tag, ep, {}))
+                else:
+                    continue
+            return patched
+
+        patched_endpoints = patch_last_param(FIXTURE_ENDPOINTS, history_depth)
+
+        # Bundle + analysis minden meccsre
+        for idx, fx in enumerate(fixtures, 1):
+            await fetch_fixture_bundle_with_custom_endpoints(client, fx, root_path, patched_endpoints)
+            fid = fx.get("fixture", {}).get("id")
+            if fid:
+                analyze_fixture(root_path, fid, enhanced_tools=None)
+            logger.info(f"TOP liga bundle+analysis: {idx}/{len(fixtures)} | FI={fid}")
+
+    # 3. ML trainálás csak top ligás meccsekkel (összes analysis.json)
+    analyzed = []
+    for p in root_path.glob("out_fixture_*"):
+        af = p / "analysis.json"
+        if af.exists():
+            js = json.loads(af.read_text(encoding="utf-8"))
+            # csak FT státuszú, kitöltött result_1x2 meccsek!
+            if js.get("status_short") == "FT" and js.get("result_1x2") is not None:
+                analyzed.append(js)
+
+    if not analyzed:
+        logger.warning("Nincs elemzett top liga meccs a tanításhoz!")
+        if telegram:
+            await telegram.send("🚫 Nincs elemzett TOP liga meccs a mai napra!", chat_id)
+        return
+
+    # 4. Feature df: advanced features + target
+    def _get_feat(r):
+        block = r.get("feature_engineering", {}).get("advanced_features", {})
+        block = block if isinstance(block, dict) else {}
+        return {
+            **block,
+            "result_1x2": r.get("result_1x2"),
+            "result_btts": r.get("result_btts"),
+            "result_over25": r.get("result_over25")
+        }
+    df = pd.DataFrame([_get_feat(r) for r in analyzed])
+    print("DF columns:", df.columns)
+    print("DF head:\n", df.head(3))
+    print("DF shape:", df.shape)
+    print("DF result_1x2 value counts:\n", df["result_1x2"].value_counts(dropna=False))
+
+    # 5. ML model train
+    from ml_model import train_model, predict_match, save_model, load_model
+    model = train_model(df, target_col="result_1x2", algo="xgb", tune=True)
+    save_model(model, "top_league_model.pkl")
+
+    # 6. Prediktálj a mai meccsekre
+    today_iso = date.today().isoformat()
+    today_fixtures = [r for r in analyzed if r.get("kickoff_utc", "").startswith(today_iso)]
+    preds = []
+    for r in today_fixtures:
+        feat = r.get("feature_engineering", {}).get("advanced_features", {})
+        pred, prob = predict_match(model, feat)
+        preds.append((r["fixture_id"], pred, prob))
+        logger.info(f"FI#{r['fixture_id']} predikció: {pred}, valószínűségek: {prob}")
+
+    # 7. Szelvény generálás (mindhárom piac)
+    tickets = select_best_raw_tickets(analyzed_results, only_today=False)
+    png_bytes = generate_ticket_card(
+        tickets, 
+        title="Szelvény", 
+        tz_label=LOCAL_TZ, 
+        logo_path="assets/logo.png", 
+        watermark_mode="global", 
+        watermark_opacity=0.08, 
+        watermark_scale=0.32
+    )
+    # Küldés Telegramra:
+    await self.send_photo(png_bytes, caption="Mai szelvény", chat_id=chat_id)
+
+    # 8. Telegramra küldés
+    def fmt_ticket_msg(tickets):
+        def fmt_one(lst, title):
+            if not lst: return f"🚫 {title}: Nincs ajánlás"
+            e = lst[0]
+            home = e.get("home_name", "?")
+            away = e.get("away_name", "?")
+            sel = e.get("selection", "")
+            odds = e.get("odds", "?")
+            return f"{title}: {home}–{away} · {sel} @ {odds}"
+        return "\n".join([
+            fmt_one(tickets.get("x1x2"), "1X2"),
+            fmt_one(tickets.get("btts"), "BTTS"),
+            fmt_one(tickets.get("overunder"), "O/U 2.5")
+        ])
+    if telegram:
+        await telegram.send("Mai TOP ligás value szelvények:\n" + fmt_ticket_msg(tickets), chat_id)
+        if HAVE_PIL:
+            png_bytes = generate_ticket_card(
+                tickets, title="Szelvény", tz_label=LOCAL_TZ,
+                logo_path=logo_path, watermark_mode="global", watermark_opacity=0.08, watermark_scale=0.32
+            )
+            await telegram.send_photo(png_bytes, caption="Mai szelvény – TOP ligák", chat_id=chat_id)
+
+async def fetch_past_fixtures_for_today_top_leagues(client, root: Path = DATA_ROOT, history_depth: int = 100):
+    """
+    Lekéri a mai TOP ligás meccsekhez az összes releváns múltbeli lezárt (FT) fixture-t:
+    - Home csapat FT meccsei
+    - Away csapat FT meccsei
+    - H2H FT meccsek
+    Mindenhez bundle + analysis generálása.
+    """
+    # 1. Mai TOP ligás meccsek lekérése
+    js = await client.get("/fixtures", {"date": date.today().isoformat()})
+    all_fixtures = js.get("response") or []
+
+    # TOP liga ID-k
+    top_league_ids = set()
+    for k in ("TIER1", "TIER1B"):
+        top_league_ids |= set(LEAGUE_MANAGER.tier_cfg["tiers"].get(k, []))
+    fixtures = [fx for fx in all_fixtures if fx.get("league", {}).get("id") in top_league_ids]
+    logger.info("Mai TOP ligás meccsek száma: %d", len(fixtures))
+
+    # 2. Összegyűjtjük az összes múltbeli fixture ID-t
+    past_fixtures = set()
+    cutoff_dt = datetime.now(timezone.utc) - timedelta(days=48*30)  # 4 év
+    for fx in fixtures:
+        home_id = fx.get("teams", {}).get("home", {}).get("id")
+        away_id = fx.get("teams", {}).get("away", {}).get("id")
+        # Home FT meccsei
+        js_home = await client.get("/fixtures", {"team": home_id, "status": "FT", "last": history_depth})
+        for pf in js_home.get("response", []):
+            pfid = pf.get("fixture", {}).get("id")
+            ts = pf.get("fixture", {}).get("timestamp")
+            if pfid and ts:
+                dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+                if dt > cutoff_dt:
+                    past_fixtures.add(pfid)
+        # Away FT meccsei
+        js_away = await client.get("/fixtures", {"team": away_id, "status": "FT", "last": history_depth})
+        for pf in js_away.get("response", []):
+            pfid = pf.get("fixture", {}).get("id")
+            ts = pf.get("fixture", {}).get("timestamp")
+            if pfid and ts:
+                dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+                if dt > cutoff_dt:
+                    past_fixtures.add(pfid)
+        # H2H FT meccsek
+        js_h2h = await client.get("/fixtures/headtohead", {"h2h": f"{home_id}-{away_id}", "status": "FT", "last": history_depth})
+        for pf in js_h2h.get("response", []):
+            pfid = pf.get("fixture", {}).get("id")
+            ts = pf.get("fixture", {}).get("timestamp")
+            if pfid and ts:
+                dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+                if dt > cutoff_dt:
+                    past_fixtures.add(pfid)
+
+    logger.info("Összes múltbeli FT fixture ID (TOP ligákhoz): %d", len(past_fixtures))
+
+    # 3. Minden múltbeli meccsre bundle + analysis
+    for idx, pfid in enumerate(sorted(past_fixtures), 1):
+        js_pf = await client.get("/fixtures", {"id": pfid})
+        resp = js_pf.get("response") or []
+        if resp:
+            await fetch_fixture_bundle(client, resp[0], root)
+            res = analyze_fixture(root, pfid, enhanced_tools=None)
+            logger.info("Múltbeli bundle+analysis: %d/%d | FI=%s", idx, len(past_fixtures), pfid)
 
 # =========================================================
 # MAIN
@@ -5004,6 +6434,90 @@ def main():
             logger.info("Bot leállítva (KeyboardInterrupt).")
         return
 
+    if getattr(args, "fetch_past_for_today_48m", False):
+        async def run_past_for_today_48m():
+            async with APIFootballClient(API_KEY, API_BASE) as client:
+                await fetch_past_fixtures_for_today_48_months(client, DATA_ROOT, history_depth=args.history_depth)
+        asyncio.run(run_past_for_today_48m())
+        return
+
+    if getattr(args, "fetch_today_full_history", False):
+        async def run_today_full_history():
+            async with APIFootballClient(API_KEY, API_BASE) as client:
+                await fetch_today_fixtures_full_history(client, DATA_ROOT, history_depth=args.history_depth)
+        asyncio.run(run_today_full_history())
+        return
+
+    # ... a main() függvényen belül, a szelveny ágon belül:
+
+    if getattr(args, "szelveny", False):
+        # 1. Beolvassa az összes analysis.json-t a DATA_ROOT-ból
+        analyzed_results = []
+        analysis_files = list(DATA_ROOT.glob("out_fixture_*/analysis.json"))
+        print(f"{len(analysis_files)} analysis.json található (debug info).")
+        for p in analysis_files:
+            try:
+                js = json.loads(p.read_text(encoding="utf-8"))
+                analyzed_results.append(js)
+            except Exception as e:
+                print(f"Hiba fájl beolvasásakor: {p}: {e}")
+
+        if not analyzed_results:
+            print("Nincs elemzett meccs (analysis.json).")
+            return
+
+        # 2. Szűrés, elemzés: a legjobb tippek mai napra, minden piacra
+        tickets = select_best_raw_tickets(analyzed_results, only_today=False)
+
+        print("\n=== Szelvény (RAW) ===")
+        for market in ("x1x2", "btts", "overunder"):
+            entry = tickets.get(market)
+            if entry:
+                e = entry[0]
+                odds_str = e['odds'] if e['odds'] is not None else "Nincs odds"
+                print(f"{market}: {e['home_name']} vs {e['away_name']} | Tipp: {e['selection']} @ {odds_str}")
+            else:
+                print(f"{market}: nincs ajánlás.")
+
+        # 3. Szelvénykép generálása (ha Pillow telepítve)
+        if HAVE_PIL:
+            png_bytes = generate_ticket_card(
+                tickets,
+                title="Szelvény",
+                tz_label=LOCAL_TZ,
+                logo_path="assets/logo.png",
+                watermark_mode="global",
+                watermark_opacity=0.08,
+                watermark_scale=0.32
+            )
+            with open("teszt_szelveny.png", "wb") as f:
+                f.write(png_bytes)
+            print("PNG szelvény mentve: teszt_szelveny.png")
+
+            # 4. Telegram küldés (ha van token és chat_id)
+            if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+                
+                async def send_ticket():
+                    bot = TelegramBot(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, GLOBAL_RUNTIME)
+                    # Szöveges összefoglaló (legjobb tipp minden piacról)
+                    msg_parts = []
+                    for market in ("x1x2", "btts", "overunder"):
+                        entry = tickets.get(market)
+                        if entry:
+                            e = entry[0]
+                            line = f"{market.upper()}: {e['home_name']} vs {e['away_name']} | Tipp: {e['selection']} @ {e['odds']}"
+                            msg_parts.append(line)
+                    text_message = "\n".join(msg_parts) if msg_parts else "Nincs ajánlás."
+                    await bot.send(text_message, TELEGRAM_CHAT_ID)
+                    await bot.send_photo(png_bytes, caption="Mai szelvény", chat_id=TELEGRAM_CHAT_ID)
+                asyncio.run(send_ticket())
+            else:
+                print("Telegram küldéshez TELEGRAM_BOT_TOKEN vagy TELEGRAM_CHAT_ID hiányzik.")
+        else:
+            print("Pillow nincs telepítve, nem generálok képet.")
+
+        return
+
     # Ha nincs fetch/analyze és nem bot
     if not (args.fetch or args.analyze):
         logger.info("Adj meg legalább egyet: --fetch vagy --analyze (vagy --telegram-bot).")
@@ -5029,11 +6543,319 @@ def main():
     except KeyboardInterrupt:
         logger.info("Megszakítva felhasználó által.")
 
+# =========================================================
+# Enhanced Statistics and Analytics with Feature Engineering
+# =========================================================
+def generate_enhanced_statistics(analysis_results: List[dict], output_file: Path):
+    """Generate comprehensive statistics using enhanced features"""
+    if not analysis_results:
+        logger.warning("No analysis results for enhanced statistics")
+        return
+    
+    stats = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "total_fixtures": len(analysis_results),
+        "feature_engineering_enabled": HAVE_FEATURE_ENGINEERING,
+        "enhanced_modeling_enabled": ENABLE_ENHANCED_MODELING,
+        "summary": {},
+        "league_breakdown": {},
+        "team_performance": {},
+        "feature_insights": {},
+        "market_analysis": {}
+    }
+    
+    # Basic statistics
+    total_edges = []
+    kelly_values = []
+    league_stats = {}
+    team_stats = {}
+    feature_data = []
+    
+    for result in analysis_results:
+        # Collect edge and kelly data
+        edge_data = result.get("edge", {})
+        kelly_data = result.get("kelly", {})
+        
+        for market in ["home", "draw", "away"]:
+            if market in edge_data:
+                total_edges.append(edge_data[market])
+            if market in kelly_data:
+                kelly_values.append(kelly_data[market])
+        
+        # League breakdown
+        league_id = result.get("league_id")
+        if league_id:
+            if league_id not in league_stats:
+                league_stats[league_id] = {
+                    "fixture_count": 0,
+                    "league_name": result.get("league_name", f"League_{league_id}"),
+                    "tier": result.get("league_tier"),
+                    "avg_edge": 0,
+                    "total_edge": 0
+                }
+            league_stats[league_id]["fixture_count"] += 1
+            if edge_data:
+                max_edge = max([edge_data.get(m, 0) for m in ["home", "draw", "away"]])
+                league_stats[league_id]["total_edge"] += max_edge
+        
+        # Team performance
+        teams = result.get("teams", {})
+        home_id = teams.get("home_id")
+        away_id = teams.get("away_id")
+        
+        for team_id in [home_id, away_id]:
+            if team_id and team_id not in team_stats:
+                team_stats[team_id] = {
+                    "fixture_count": 0,
+                    "total_edge": 0,
+                    "avg_lambda": 0,
+                    "lambda_count": 0
+                }
+            if team_id:
+                team_stats[team_id]["fixture_count"] += 1
+                
+        # Collect feature engineering data
+        fe_data = result.get("feature_engineering", {})
+        if fe_data and "advanced_features" in fe_data:
+            feature_data.append(fe_data["advanced_features"])
+    
+    # Calculate summary statistics
+    if total_edges:
+        stats["summary"] = {
+            "avg_edge": np.mean(total_edges) if np else sum(total_edges) / len(total_edges),
+            "max_edge": max(total_edges),
+            "min_edge": min(total_edges),
+            "positive_edges": len([e for e in total_edges if e > 0]),
+            "edge_std": np.std(total_edges) if np else 0
+        }
+    
+    if kelly_values:
+        stats["summary"]["avg_kelly"] = np.mean(kelly_values) if np else sum(kelly_values) / len(kelly_values)
+        stats["summary"]["max_kelly"] = max(kelly_values)
+    
+    # League breakdown with averages
+    for league_id, data in league_stats.items():
+        if data["fixture_count"] > 0:
+            data["avg_edge"] = data["total_edge"] / data["fixture_count"]
+    stats["league_breakdown"] = league_stats
+    
+    # Team performance summary
+    stats["team_performance"] = {
+        "total_teams": len(team_stats),
+        "most_analyzed_teams": sorted(
+            [(tid, data["fixture_count"]) for tid, data in team_stats.items()],
+            key=lambda x: x[1], reverse=True
+        )[:10]
+    }
+    
+    # Feature engineering insights
+    if feature_data and HAVE_FEATURE_ENGINEERING:
+        try:
+            df_features = pd.DataFrame(feature_data)
+            
+            # Calculate feature correlations and insights
+            numeric_cols = df_features.select_dtypes(include=[np.number]).columns
+            if len(numeric_cols) > 0:
+                stats["feature_insights"] = {
+                    "total_features": len(numeric_cols),
+                    "feature_summary": {},
+                    "correlation_highlights": []
+                }
+                
+                for col in numeric_cols[:20]:  # Limit to first 20 features
+                    values = df_features[col].dropna()
+                    if len(values) > 0:
+                        stats["feature_insights"]["feature_summary"][col] = {
+                            "mean": float(values.mean()),
+                            "std": float(values.std()),
+                            "min": float(values.min()),
+                            "max": float(values.max())
+                        }
+                
+                # Find interesting correlations
+                if len(df_features) > 1:
+                    corr_matrix = df_features[numeric_cols].corr()
+                    high_corr = []
+                    for i in range(len(corr_matrix.columns)):
+                        for j in range(i+1, len(corr_matrix.columns)):
+                            corr_val = corr_matrix.iloc[i, j]
+                            if abs(corr_val) > 0.7:  # High correlation threshold
+                                high_corr.append({
+                                    "feature1": corr_matrix.columns[i],
+                                    "feature2": corr_matrix.columns[j],
+                                    "correlation": float(corr_val)
+                                })
+                    stats["feature_insights"]["correlation_highlights"] = high_corr[:10]
+                    
+        except Exception as e:
+            logger.warning(f"Feature insights generation failed: {e}")
+            stats["feature_insights"] = {"error": str(e)}
+    
+    # Market analysis
+    market_odds = []
+    market_edges = []
+    for result in analysis_results:
+        market_data = result.get("market_odds", {})
+        edge_data = result.get("edge", {})
+        
+        for market in ["home", "draw", "away"]:
+            if market in market_data:
+                market_odds.append(market_data[market])
+            if market in edge_data:
+                market_edges.append(edge_data[market])
+    
+    if market_odds:
+        stats["market_analysis"] = {
+            "avg_odds": np.mean(market_odds) if np else sum(market_odds) / len(market_odds),
+            "odds_range": [min(market_odds), max(market_odds)],
+            "market_efficiency": len([e for e in market_edges if abs(e) < 0.05]) / len(market_edges) if market_edges else 0
+        }
+    
+    # Save enhanced statistics
+    safe_write_json(output_file, stats)
+    logger.info(f"Enhanced statistics generated: {output_file}")
+    
+    return stats
+
+def analyze_feature_importance(analysis_results: List[dict]) -> dict:
+    """Analyze which features are most predictive"""
+    if not HAVE_FEATURE_ENGINEERING or not analysis_results:
+        return {"error": "Feature engineering not available or no data"}
+    
+    try:
+        # Extract features and outcomes
+        features_list = []
+        outcomes = []
+        
+        for result in analysis_results:
+            fe_data = result.get("feature_engineering", {})
+            if "advanced_features" in fe_data:
+                features_list.append(fe_data["advanced_features"])
+                
+                # Simple outcome: positive edge
+                edge_data = result.get("edge", {})
+                max_edge = max([edge_data.get(m, 0) for m in ["home", "draw", "away"]])
+                outcomes.append(1 if max_edge > 0.05 else 0)  # Binary outcome
+        
+        if len(features_list) < 10:  # Need minimum data
+            return {"error": "Insufficient data for feature importance analysis"}
+        
+        # Create feature matrix
+        df_features = pd.DataFrame(features_list)
+        numeric_features = df_features.select_dtypes(include=[np.number]).fillna(0)
+        
+        if len(numeric_features.columns) == 0:
+            return {"error": "No numeric features available"}
+        
+        # Simple correlation-based feature importance
+        feature_importance = {}
+        for col in numeric_features.columns:
+            corr = np.corrcoef(numeric_features[col], outcomes)[0, 1]
+            if not np.isnan(corr):
+                feature_importance[col] = abs(corr)
+        
+        # Sort by importance
+        sorted_features = sorted(feature_importance.items(), key=lambda x: x[1], reverse=True)
+        
+        return {
+            "top_features": sorted_features[:15],
+            "total_features_analyzed": len(feature_importance),
+            "analysis_timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Feature importance analysis failed: {e}")
+        return {"error": str(e)}
+
+def generate_all_fixtures_full_dump(root: Path = DATA_ROOT, output_path: Path = None):
+    """
+    Végigmegy az összes out_fixture_<id> mappán, minden adatot egy JSON-ba gyűjt.
+    Ha output_path nincs megadva, DATA_ROOT/all_fixtures_full_dump.json-ba menti.
+    """
+    fixture_dirs = [p for p in root.glob("out_fixture_*") if p.is_dir()]
+    all_data = []
+
+    for dir_path in fixture_dirs:
+        fid = int(dir_path.name.split("_")[-1])
+        entry = {"fixture_id": fid}
+        # Fő jsonok
+        for fname in ["analysis.json", "primary_fixture.json", "summary.json"]:
+            fpath = dir_path / fname
+            if fpath.exists():
+                try:
+                    entry[fname.replace(".json", "")] = json.loads(fpath.read_text(encoding="utf-8"))
+                except Exception:
+                    entry[fname.replace(".json", "")] = None
+        # Raw mappa összes jsonja
+        raw_path = dir_path / "raw"
+        raw_files = list(raw_path.glob("*.json")) if raw_path.exists() else []
+        raw_data = {}
+        for rf in raw_files:
+            try:
+                raw_data[rf.name.replace(".json","")] = json.loads(rf.read_text(encoding="utf-8"))
+            except Exception:
+                raw_data[rf.name.replace(".json","")] = None
+        entry["raw"] = raw_data
+        all_data.append(entry)
+
+    # Output mentés
+    if output_path is None:
+        output_path = root / "all_fixtures_full_dump.json"
+    with output_path.open("w", encoding="utf-8") as f:
+        json.dump(all_data, f, indent=2, ensure_ascii=False)
+    print(f"Kész: {len(all_data)} mérkőzés dump-olva: {output_path}")
 
 # ====== VÉGPONT =======/
 if __name__ == "__main__":
     try:
+        # ... main() meghívása ...
         main()
     except Exception:
         logger.exception("Főprogram hiba – kilépés")
         raise
+
+    # ---- TESZT: select_best_raw_tickets ----
+    # Töltsd be az analysis.json-t egy vagy több meccshez
+    from pathlib import Path
+    import json
+
+    # Az analyzed_results betöltése (egy vagy több analysis.json)
+    analyzed_results = []
+    for p in Path("data").glob("out_fixture_*/analysis.json"):
+        try:
+            js = json.loads(p.read_text(encoding="utf-8"))
+            analyzed_results.append(js)
+        except Exception:
+            continue
+
+    if not analyzed_results:
+        print("Nincs elemzett meccs (analysis.json).")
+    else:
+        # Szelvény generálás
+        tickets = select_best_raw_tickets(analyzed_results, only_today=False)
+        print("\n=== Szelvény (RAW) ===")
+        for market in ("x1x2", "btts", "overunder"):
+            entry = tickets.get(market)
+            if entry:
+                e = entry[0]
+                odds_str = e['odds'] if e['odds'] is not None else "Nincs odds"
+                print(f"{market}: {e['home_name']} vs {e['away_name']} | Tipp: {e['selection']} @ {odds_str}")
+            else:
+                print(f"{market}: nincs ajánlás.")
+
+        # Kép generálás (ha Pillow telepítve)
+        if HAVE_PIL:
+            png_bytes = generate_ticket_card(
+                tickets,
+                title="Szelvény",
+                tz_label=LOCAL_TZ,
+                logo_path="assets/logo.png",
+                watermark_mode="global",
+                watermark_opacity=0.08,
+                watermark_scale=0.32
+            )
+            with open("teszt_szelveny.png", "wb") as f:
+                f.write(png_bytes)
+            print("PNG szelvény mentve: teszt_szelveny.png")
+        else:
+            print("Pillow nincs telepítve, nem generálok képet.")
